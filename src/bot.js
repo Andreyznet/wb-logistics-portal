@@ -31,7 +31,7 @@ export class BotWorker {
     if([401,403].includes(response.status))throw new PollError('WB отказал в доступе. Проверьте токен перед повторным включением.',{stop:true});
     if(response.status===429){const retry=response.headers.get('retry-after');const delay=retry&&/^\d+$/.test(retry)?Number(retry)*1000:Math.max(0,Date.parse(retry)-this.clock().getTime())||60000;throw new PollError('WB ограничил частоту запросов. Опрос отложен.',{delay:Math.max(60000,delay)});}
     if(response.status>=300&&response.status<400)throw new PollError('WB перенаправил запрос. Требуется проверка авторизации.',{stop:true});
-    if(!response.ok)throw new PollError(`Ошибка WB: HTTP ${response.status}.`);
+    if(!response.ok){let explanation='';try{const body=await response.json();explanation=String(body?.error?.message||body?.message||'').replaceAll(token,'[скрыто]').slice(0,1000);}catch{}throw new PollError(`Ошибка WB: HTTP ${response.status}. ${explanation}`.trim());}
     if(!(response.headers.get('content-type')||'').includes('json'))throw new PollError('WB вернул страницу вместо JSON. Требуется ручная проверка.',{stop:true});
     try{return await response.json();}catch{throw new PollError('WB вернул некорректный JSON.');}
   }

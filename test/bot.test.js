@@ -141,3 +141,12 @@ test('plan starts on chosen date, remains active on later days and accepts WB da
  now=new Date(now.getTime()+86400000);await worker.tick();assert.equal(calls,4);assert.equal(store.getBotStatus(admin).runtime.candidates,1);
  }finally{store.close();}
 });
+
+test('acceptance outcomes distinguish verified assignment from HTTP success and retain WB explanation',()=>{
+ const {store,admin}=init();try{
+ const expected={driverId:12,vehicleId:34};
+ const failed=store.recordAcceptanceResult({id:900,routeId:61373,httpStatus:409,response:{success:false,error:{message:'Выбранный маршрут нельзя взять в работу.'}},expected});assert.equal(failed.kind,'acceptance_error');assert.equal(failed.payload.message,'Выбранный маршрут нельзя взять в работу.');
+ assert.equal(store.recordAcceptanceResult({id:900,httpStatus:200,response:{success:true},expected}).kind,'acceptance_error');
+ const success=store.recordAcceptanceResult({id:900,routeId:61373,httpStatus:200,response:{data:{transport_request_id:900,supplier_id:55,driver_id:12,vehicle_id:34}},expected});assert.equal(success.kind,'acceptance_success');assert.equal(store.getBotStatus(admin).outcomes.length,1);assert.equal(store.getBotStatus(admin).outcomes[0].kind,'acceptance_success');assert.ok(store.getBotStatus(admin).logs.some(e=>e.kind==='acceptance_error'));
+ }finally{store.close();}
+});

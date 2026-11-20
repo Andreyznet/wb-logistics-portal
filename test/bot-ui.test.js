@@ -20,3 +20,7 @@ test('header and checkbox share state; stale poll cannot undo an immediate toggl
  assert.equal(toggle.checked,false);assert.match(box.innerHTML,/Мониторинг выключен/);
  assert.equal(toggle.disabled,false);
 });
+
+test('found candidate stays neutral until an acceptance outcome is recorded and WB text is escaped',async()=>{
+ const source=await readFile(new URL('../public/app.js',import.meta.url),'utf8');const block=source.slice(source.indexOf('function acceptanceMarkup('),source.indexOf('function resultElement('));const context=vm.createContext({state:{bot:{}},esc:value=>String(value).replaceAll('<','&lt;')});vm.runInContext(block,context);assert.match(vm.runInContext('acceptanceMarkup(1)',context),/Запрос не отправлялся/);context.state.bot.outcomes=[{id:1,kind:'acceptance_error',payload:{message:'<WB error>'}}];assert.match(vm.runInContext('acceptanceMarkup(1)',context),/outcome-error/);assert.match(vm.runInContext('acceptanceMarkup(1)',context),/&lt;WB error>/);context.state.bot.outcomes[0].kind='acceptance_success';assert.match(vm.runInContext('acceptanceMarkup(1)',context),/outcome-ok/);
+});

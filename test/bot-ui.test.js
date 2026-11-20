@@ -15,9 +15,9 @@ test('header and checkbox share state; stale poll cannot undo an immediate toggl
  vm.runInContext(block,context);
  const poll=vm.runInContext('updateHeaderBot()',context);
  await vm.runInContext('setBotEnabled(false)',context);
- assert.equal(toggle.checked,false);assert.match(box.innerHTML,/Мониторинг выключен/);
+ assert.equal(toggle.checked,false);assert.match(box.innerHTML,/Бот остановлен/);
  finishPoll({settings:{enabled:true,revision:1},runtime:{state:'waiting'}});await poll;
- assert.equal(toggle.checked,false);assert.match(box.innerHTML,/Мониторинг выключен/);
+ assert.equal(toggle.checked,false);assert.match(box.innerHTML,/Бот остановлен/);
  assert.equal(toggle.disabled,false);
 });
 

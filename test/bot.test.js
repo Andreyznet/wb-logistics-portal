@@ -24,7 +24,7 @@ test('default settings, validation and admin-only access protect bot configurati
   const{store,admin}=init();try{
     const initial=store.getBotSettings(admin);assert.equal(initial.intervalSeconds,60);assert.equal(initial.enabled,false);assert.equal(initial.hasToken,false);
     assert.throws(()=>store.getBotSettings({role:'logist'}),/администратору/);
-    for(const extra of [{intervalSeconds:2},{intervalSeconds:1.5},{days:[1,1]},{scheduleEnabled:true,days:[]},{scheduleEnabled:true,startTime:'08:00',endTime:'08:00'}])assert.throws(()=>config(store,admin,extra));
+    for(const extra of [{supplierId:79025981410},{intervalSeconds:2},{intervalSeconds:1.5},{days:[1,1]},{scheduleEnabled:true,days:[]},{scheduleEnabled:true,startTime:'08:00',endTime:'08:00'}])assert.throws(()=>config(store,admin,extra));
     assert.throws(()=>store.saveBotSettings({...initial,enabled:true},admin),/токен/);
     const saved=config(store,admin,{enabled:true,intervalSeconds:3});assert.equal(saved.intervalSeconds,3);assert.equal(saved.hasToken,true);assert.equal(saved.revision,1);
     assert.equal(JSON.stringify(saved).includes(testToken),false);assert.equal(JSON.stringify(store.activity()).includes(testToken),false);

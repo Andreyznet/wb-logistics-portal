@@ -101,7 +101,7 @@ test('HTTP authentication, roles, same-origin writes, setup closure and full req
     assert.equal(JSON.stringify((await call('/api/activity')).value).includes(secret),false);
     for(const asset of ['/vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css']){const result=await fetch(origin+asset);assert.equal(result.status,200);}
     store.recordBotLog('poll_completed',{routes:[61373,65522,64197],total:300,targetRecords:9,candidates:0,newEvents:0});
-    for(const endpoint of ['/api/bot/settings','/api/bot/status']){const result=await call(endpoint);assert.equal(result.value.serverVersion,'0.5.2');assert.equal(result.value.logs[0].kind,'poll_completed');assert.equal(result.value.logs[0].payload.total,300);assert.equal(JSON.stringify(result.value).includes(secret),false);}
+    for(const endpoint of ['/api/bot/settings','/api/bot/status']){const result=await call(endpoint);assert.equal(result.value.serverVersion,'0.6.0');assert.equal(result.value.logs[0].kind,'poll_completed');assert.equal(result.value.logs[0].payload.total,300);assert.equal(JSON.stringify(result.value).includes(secret),false);}
 
     assert.equal((await call('/api/setup',{}, {extra:{'X-Setup-Token':'test-setup'}})).res.status,409);
     assert.equal((await call('/api/catalog/import',directory)).res.status,200);
@@ -114,6 +114,10 @@ test('HTTP authentication, roles, same-origin writes, setup closure and full req
     assert.equal((await call('/api/bot/settings',undefined,{cookie:logistCookie})).res.status,403);
     assert.equal((await call('/api/bot/settings',{token:'must-not-be-saved'},{cookie:logistCookie})).res.status,403);
     assert.equal((await call('/api/bot/status',undefined,{cookie:logistCookie})).res.status,403);
+    store.recordBotCandidates([{id:987,routeId:61373}],{response:{data:[{transport_request_id:987,extra:'retained'}]}});const snapshotId=store.getBotStatus(store.users()[0]).events[0].payload.snapshotId;
+    assert.equal((await call('/api/bot/snapshots/'+snapshotId,undefined,{cookie:logistCookie})).res.status,403);
+    const downloaded=await call('/api/bot/snapshots/'+snapshotId);assert.equal(downloaded.res.status,200);assert.equal(downloaded.value.response.data[0].extra,'retained');
+
     const publicStatus=await call('/api/bot/public-status',undefined,{cookie:logistCookie});assert.equal(publicStatus.res.status,200);assert.equal(JSON.stringify(publicStatus.value).includes(secret),false);
     assert.equal((await call('/api/catalog/sync',{}, {cookie:logistCookie})).res.status,403);
     assert.equal((await call('/api/requests',undefined,{cookie:logistCookie})).value.data.length,1);

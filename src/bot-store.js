@@ -16,7 +16,7 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
     if(key.length!==32)throw new Error('Invalid bot encryption key file');
   }
   db.exec(`CREATE TABLE IF NOT EXISTS bot_observations(id INTEGER PRIMARY KEY,fingerprint TEXT NOT NULL,active INTEGER NOT NULL,payload TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS bot_logs(id INTEGER PRIMARY KEY,kind TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS bot_events(id INTEGER PRIMARY KEY,kind TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);`);
+    CREATE TABLE IF NOT EXISTS bot_snapshots(id INTEGER PRIMARY KEY,payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS bot_logs(id INTEGER PRIMARY KEY,kind TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS bot_events(id INTEGER PRIMARY KEY,kind TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);`);
   const read=(name,fallback)=>{const r=db.prepare('SELECT value FROM settings WHERE key=?').get(name);return r?JSON.parse(r.value):fallback;};
   const write=(name,value)=>db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(name,JSON.stringify(value));
   function encrypt(value){const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',key,iv);const data=Buffer.concat([cipher.update(value,'utf8'),cipher.final()]);return{iv:iv.toString('base64'),tag:cipher.getAuthTag().toString('base64'),data:data.toString('base64')};}
@@ -50,13 +50,13 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
   function botConfig(){return {...read('bot_config',defaults()),token:decrypt(read('bot_token',null)),timeZone};}
   function stopBot(reason){const config=read('bot_config',defaults());if(config.enabled){write('bot_config',{...config,enabled:false,revision:config.revision+1,updatedAt:new Date().toISOString()});audit(null,'bot_stopped',null,reason);}}
   function setBotRuntime(runtime){const old=read('bot_runtime',{});const value={...old,...runtime};if(JSON.stringify(old)!==JSON.stringify(value))write('bot_runtime',value);return value;}
-  function getBotStatus(actor){requireAdmin(actor);return {serverVersion:'0.5.2',runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},logs:db.prepare('SELECT * FROM bot_logs ORDER BY id DESC LIMIT 100').all().map(row=>({...row,payload:JSON.parse(row.payload)})),events:db.prepare('SELECT id,kind,payload,created_at FROM bot_events ORDER BY id DESC LIMIT 30').all().map(row=>({...row,payload:JSON.parse(row.payload)}))};}
-  function recordBotCandidates(candidates){return transaction(()=>{
+  function getBotStatus(actor){requireAdmin(actor);return {serverVersion:'0.6.0',runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},logs:db.prepare('SELECT * FROM bot_logs ORDER BY id DESC LIMIT 100').all().map(row=>({...row,payload:JSON.parse(row.payload)})),events:db.prepare('SELECT id,kind,payload,created_at FROM bot_events ORDER BY id DESC LIMIT 30').all().map(row=>({...row,payload:JSON.parse(row.payload)}))};}
+  function recordBotCandidates(candidates,snapshot=null){return transaction(()=>{
     const old=new Map(db.prepare('SELECT * FROM bot_observations').all().map(row=>[row.id,row]));
     db.exec('UPDATE bot_observations SET active=0');
-    let events=0;
-    for(const row of candidates){const payload=JSON.stringify(row),hash=createHash('sha256').update(payload).digest('hex'),previous=old.get(row.id);if(!previous||!previous.active||previous.fingerprint!==hash){db.prepare('INSERT INTO bot_events(kind,payload,created_at) VALUES(?,?,?)').run(previous?.active?'candidate_updated':'candidate_found',payload,new Date().toISOString());recordBotLog('curl_preview',row);events++;}db.prepare('INSERT INTO bot_observations VALUES(?,?,1,?) ON CONFLICT(id) DO UPDATE SET fingerprint=excluded.fingerprint,active=1,payload=excluded.payload').run(row.id,hash,payload);}
-    db.exec('DELETE FROM bot_events WHERE id NOT IN (SELECT id FROM bot_events ORDER BY id DESC LIMIT 1000)');return events;
+    let events=0,snapshotId=null;
+    for(const row of candidates){const payload=JSON.stringify(row),hash=createHash('sha256').update(payload).digest('hex'),previous=old.get(row.id);if(!previous||!previous.active||previous.fingerprint!==hash){if(snapshot&&!snapshotId)snapshotId=Number(db.prepare('INSERT INTO bot_snapshots(payload) VALUES(?)').run(JSON.stringify(snapshot)).lastInsertRowid);const eventPayload={...row,...(snapshotId?{snapshotId}:{})};db.prepare('INSERT INTO bot_events(kind,payload,created_at) VALUES(?,?,?)').run(previous?.active?'candidate_updated':'candidate_found',JSON.stringify(eventPayload),new Date().toISOString());recordBotLog('curl_preview',eventPayload);if(snapshotId)recordBotLog('snapshot_saved',{id:row.id,routeId:row.routeId,snapshotId});events++;}db.prepare('INSERT INTO bot_observations VALUES(?,?,1,?) ON CONFLICT(id) DO UPDATE SET fingerprint=excluded.fingerprint,active=1,payload=excluded.payload').run(row.id,hash,payload);}
+    db.exec('DELETE FROM bot_events WHERE id NOT IN (SELECT id FROM bot_events ORDER BY id DESC LIMIT 1000)');db.exec("DELETE FROM bot_snapshots WHERE id NOT IN (SELECT json_extract(payload,'$.snapshotId') FROM bot_events WHERE json_extract(payload,'$.snapshotId') IS NOT NULL)");return events;
   });}
   function recordBotLog(kind,payload){
     const at=new Date().toISOString();
@@ -64,6 +64,7 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
     db.exec('DELETE FROM bot_logs WHERE id NOT IN (SELECT id FROM bot_logs ORDER BY id DESC LIMIT 2000)');
     console.log(JSON.stringify({at,type:kind,...payload}));
   }
-  return {recordBotLog,getBotSettings,saveBotSettings,botConfig,stopBot,setBotRuntime,getBotStatus,recordBotCandidates};
+  function getBotSnapshot(id,actor){requireAdmin(actor);const row=db.prepare('SELECT payload FROM bot_snapshots WHERE id=?').get(id);if(!row)fail(404,'Снимок ответа не найден.');return JSON.parse(row.payload);}
+  return {getBotSnapshot,recordBotLog,getBotSettings,saveBotSettings,botConfig,stopBot,setBotRuntime,getBotStatus,recordBotCandidates};
 }
 

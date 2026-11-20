@@ -63,7 +63,7 @@ test('worker is read-only, scopes candidates by planned route AND local date, an
     addPlan(store,admin);const worker=new BotWorker(store,{fetchImpl,clock:()=>now});
     await worker.tick();assert.equal(calls.length,0);
     config(store,admin,{enabled:true});await worker.tick();assert.equal(calls.length,2);assert.equal(store.getBotStatus(admin).events.length,1);assert.equal(store.getBotStatus(admin).events[0].payload.id,100);
-    const snapshot=store.getBotStatus(admin);assert.ok(snapshot.logs.some(e=>e.kind==='request_started'));assert.ok(snapshot.logs.some(e=>e.payload.httpStatus===200));
+    const snapshot=store.getBotStatus(admin);const savedResponse=store.getBotSnapshot(snapshot.events[0].payload.snapshotId,admin);assert.equal(savedResponse.response.data.length,3);assert.equal(savedResponse.response.data[1].route_id,66091);assert.equal(savedResponse.method,'GET');assert.ok(snapshot.logs.some(e=>e.kind==='request_started'));assert.ok(snapshot.logs.some(e=>e.payload.httpStatus===200));
     assert.ok(snapshot.events[0].payload.curl.includes('"vehicle":2,"driver":1'));assert.ok(snapshot.events[0].payload.curl.includes('$env:WB_TOKEN'));assert.equal(JSON.stringify(snapshot).includes(testToken),false);
     await worker.tick();assert.equal(calls.length,2);
     now=new Date(now.getTime()+61000);await worker.tick();assert.equal(calls.length,4);assert.equal(store.getBotStatus(admin).events.length,1);
@@ -126,4 +126,9 @@ test('assigned and non-created cards never become candidates or curl previews',a
 
 test('saved off state immediately overrides old waiting runtime',()=>{
  const {store,admin}=init();try{config(store,admin,{enabled:true});store.setBotRuntime({state:'waiting',nextPollAt:new Date(Date.now()+60000).toISOString()});config(store,admin,{enabled:false});const status=store.getBotStatus(admin);assert.equal(status.runtime.state,'stopped');assert.equal(status.runtime.nextPollAt,null);config(store,admin,{enabled:true});assert.equal(store.getBotStatus(admin).runtime.state,'starting');}finally{store.close();}
+});
+
+test('full response snapshots persist, share one copy per event batch and require admin',async()=>{
+ const folder=await mkdtemp(join(tmpdir(),'wb-snapshot-'));const file=join(folder,'portal.sqlite');let {store,admin}=init(file);
+ try{const candidates=[{id:10,routeId:61373},{id:11,routeId:65522}];const response={data:[{transport_request_id:10,extra:{arbitrary:'unchanged'}}],meta:{count:1}};const input={receivedAt:new Date().toISOString(),response};assert.equal(store.recordBotCandidates(candidates,input),2);const events=store.getBotStatus(admin).events;const id=events[0].payload.snapshotId;assert.equal(id,events[1].payload.snapshotId);assert.deepEqual(store.getBotSnapshot(id,admin),input);assert.throws(()=>store.getBotSnapshot(id,{role:'logist'}));assert.equal(store.recordBotCandidates(candidates,input),0);assert.equal(store.db.prepare('SELECT count(*) AS n FROM bot_snapshots').get().n,1);store.close();({store,admin}=init(file));assert.deepEqual(store.getBotSnapshot(id,admin),input);}finally{store.close();await rm(folder,{recursive:true,force:true});}
 });

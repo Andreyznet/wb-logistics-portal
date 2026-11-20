@@ -91,6 +91,8 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
             return json(200,{settings,...store.getBotStatus(user)});
           }
         }
+        const snapshotMatch=/^\/api\/bot\/snapshots\/(\d+)$/.exec(url.pathname);
+        if(snapshotMatch&&req.method==='GET')return json(200,store.getBotSnapshot(Number(snapshotMatch[1]),user));
         if (url.pathname === '/api/bot/status' && req.method === 'GET') {
           if(user.role!=='admin')fail(403,'Состояние бота доступно только администратору.');
           return json(200,{settings:store.getBotSettings(user),...store.getBotStatus(user)});

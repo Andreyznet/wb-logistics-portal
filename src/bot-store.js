@@ -49,7 +49,7 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
   function botConfig(){return {...read('bot_config',defaults()),token:decrypt(read('bot_token',null)),timeZone};}
   function stopBot(reason){const config=read('bot_config',defaults());if(config.enabled){write('bot_config',{...config,enabled:false,revision:config.revision+1,updatedAt:new Date().toISOString()});audit(null,'bot_stopped',null,reason);}}
   function setBotRuntime(runtime){const old=read('bot_runtime',{});const value={...old,...runtime};if(JSON.stringify(old)!==JSON.stringify(value))write('bot_runtime',value);return value;}
-  function getBotStatus(actor){requireAdmin(actor);return {serverVersion:'0.4.1',runtime:read('bot_runtime',{state:'stopped'}),logs:db.prepare('SELECT * FROM bot_logs ORDER BY id DESC LIMIT 100').all().map(row=>({...row,payload:JSON.parse(row.payload)})),events:db.prepare('SELECT id,kind,payload,created_at FROM bot_events ORDER BY id DESC LIMIT 30').all().map(row=>({...row,payload:JSON.parse(row.payload)}))};}
+  function getBotStatus(actor){requireAdmin(actor);return {serverVersion:'0.5.0',runtime:read('bot_runtime',{state:'stopped'}),logs:db.prepare('SELECT * FROM bot_logs ORDER BY id DESC LIMIT 100').all().map(row=>({...row,payload:JSON.parse(row.payload)})),events:db.prepare('SELECT id,kind,payload,created_at FROM bot_events ORDER BY id DESC LIMIT 30').all().map(row=>({...row,payload:JSON.parse(row.payload)}))};}
   function recordBotCandidates(candidates){return transaction(()=>{
     const old=new Map(db.prepare('SELECT * FROM bot_observations').all().map(row=>[row.id,row]));
     db.exec('UPDATE bot_observations SET active=0');

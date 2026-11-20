@@ -3,13 +3,14 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#722ed1"><title>Маршрут — кабинет логиста</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/styles.css">
-  <script src="/app.js" defer></script>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/vendor/tabulator/tabulator.min.css"><link rel="stylesheet" href="/styles.css">
+  <script src="/vendor/tabulator/tabulator.min.js" defer></script><script src="/app.js" defer></script>
 </head>
 <body>
   <div id="app"><div class="loading">Загружаем кабинет…</div></div>
   <div id="toast" role="status" aria-live="polite"></div>
   <dialog id="request-dialog" aria-labelledby="dialog-title"></dialog>
   <dialog id="user-dialog" aria-labelledby="user-dialog-title"></dialog>
+<dialog id="curl-log-dialog"><h2>Команда cURL</h2><p>Только текст. Запрос принятия не отправлен. Вместо токена — переменная WB_TOKEN.</p><pre></pre><form method="dialog"><button class="secondary">Закрыть</button></form></dialog>
 </body>
 </html>

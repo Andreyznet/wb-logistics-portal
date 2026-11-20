@@ -111,7 +111,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         fail(404,'Раздел не найден или недостаточно прав.');
       }
       if (req.method !== 'GET') fail(404,'Страница не найдена.');
-      const files = { '/':'index.html','/app.js':'app.js','/styles.css':'styles.css','/favicon.svg':'favicon.svg' };
+      const files = { '/':'index.html','/app.js':'app.js','/styles.css':'styles.css','/vendor/tabulator/tabulator.min.js':'vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css':'vendor/tabulator/tabulator.min.css','/favicon.svg':'favicon.svg' };
       const file = files[url.pathname];
       if (!file) fail(404,'Страница не найдена.');
       const mime = file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html';

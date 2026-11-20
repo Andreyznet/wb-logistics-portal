@@ -118,3 +118,8 @@ test('preview uses validated IDs, never embeds credentials and refuses unconfirm
   assert.equal(previewCurl(123,{driver_id:4,vehicle_id:5,trailer_id:6}),null);
   assert.throws(()=>previewCurl('123;other',{driver_id:4,vehicle_id:5}));
 });
+
+test('assigned and non-created cards never become candidates or curl previews',async()=>{
+ const {store,admin}=init();const date=businessDate();const base={route_id:61373,car_dt:date+'T12:00:00+05:00'};const calls=[];
+ try{addPlan(store,admin);config(store,admin,{enabled:true});const worker=new BotWorker(store,{fetchImpl:async(url,options)=>{calls.push(url);assert.equal(options.method,'GET');return Response.json({data:url.endsWith('TO_DELIVERY')?[{...base,transport_request_id:100,supplier_id:5},{...base,transport_request_id:101,supplier_id:null}]:{...base,transport_request_id:101,supplier_id:null,request_status:'cancelled',is_closed:false}});}});await worker.tick();const status=store.getBotStatus(admin);assert.equal(calls.length,2);assert.equal(status.runtime.candidates,0);assert.equal(status.events.length,0);assert.equal(status.logs.some(e=>e.kind==='curl_preview'),false);}finally{store.close();}
+});

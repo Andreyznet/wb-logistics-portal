@@ -28,8 +28,8 @@ async function api(path,{method='GET',data,headers={}}={}){
   return result;
 }
 async function boot(){
-  try{state.session=await api('/api/session');state.user=state.session.user;if(state.session.serverVersion!=='0.10.3')throw new Error('Версии страницы и сервера различаются. Обновите папку src и перезапустите сервер портала.');if(!state.user)return renderAuth();await load();render();}
-  catch(error){app.innerHTML=`<div class="empty"><h3>Не удалось загрузить кабинет</h3><p>${esc(error.message)}</p><div class="dialog-buttons"><button class="primary" id="retry">Повторить</button><button class="secondary" id="error-logout">Выйти из аккаунта</button></div></div>`;document.querySelector('#retry').onclick=boot;document.querySelector('#error-logout').onclick=async()=>{try{await api('/api/logout',{method:'POST',data:{}});state.user=null;state.view='requests';state.bot=null;await boot();}catch(e){toast(e.message,'error');}};}
+  try{state.session=await api('/api/session');state.user=state.session.user;if(state.session.serverVersion!=='0.10.4')throw new Error('Версии страницы и сервера различаются. Обновите папку src и перезапустите сервер портала.');if(!state.user)return renderAuth();await load();render();}
+  catch(error){app.innerHTML=`<main class="boot-error-screen"><section class="boot-error-card" aria-labelledby="boot-error-title"><div class="boot-error-icon" aria-hidden="true">${icon('info')}</div><h1 id="boot-error-title">Не удалось загрузить кабинет</h1><p>${esc(error.message)}</p><div class="boot-error-actions"><button class="primary" id="retry">Повторить</button><button class="secondary" id="error-logout">Выйти из аккаунта</button></div></section></main>`;document.querySelector('#retry').onclick=boot;document.querySelector('#error-logout').onclick=async()=>{try{await api('/api/logout',{method:'POST',data:{}});state.user=null;state.view='requests';state.bot=null;await boot();}catch(e){toast(e.message,'error');}};}
 }
 async function load(){
   const [catalog,requests,activity]=await Promise.all([api('/api/catalog'),api('/api/requests'),state.user.role==='logist'?Promise.resolve({data:[]}):api('/api/activity')]);

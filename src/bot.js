@@ -1,3 +1,4 @@
+import { LiveAcceptance } from './live-acceptance.js';
 const API='https://logistics.wb.ru/transport-requests-service/api/v1/transport-requests';
 const weekday={Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6,Sun:7};
 export function localParts(date,timeZone){const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit',weekday:'short',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(date).map(p=>[p.type,p.value]));return{date:`${p.year}-${p.month}-${p.day}`,day:weekday[p.weekday],time:`${p.hour}:${p.minute}`};}
@@ -15,7 +16,7 @@ export function previewCurl(id,plan){
   return `curl.exe --request PUT "${API}/${id}/take-by-supplier" --header "Authorization: Bearer $env:WB_TOKEN" --header "Content-Type: application/json" --data-raw '${body}'`;
 }
 export class BotWorker {
-  constructor(store,{fetchImpl=fetch,clock=()=>new Date()}={}){this.store=store;this.fetchImpl=fetchImpl;this.clock=clock;this.busy=false;this.controller=null;this.timer=null;this.revision=null;this.nextAt=0;this.lastAttempt=0;this.generation=0;this.failures=0;}
+  constructor(store,{fetchImpl=fetch,clock=()=>new Date()}={}){this.store=store;this.fetchImpl=fetchImpl;this.clock=clock;this.busy=false;this.controller=null;this.timer=null;this.revision=null;this.nextAt=0;this.lastAttempt=0;this.generation=0;this.failures=0;this.live=new LiveAcceptance(store,this);}
   start(){this.store.setBotRuntime({state:'stopped',nextPollAt:null});const run=()=>this.tick().catch(()=>this.store.setBotRuntime({state:'error',error:'Ошибка процесса мониторинга.'}));this.timer=setInterval(run,1000);this.timer.unref();void run();}
   stop(){clearInterval(this.timer);this.generation++;this.controller?.abort();}
   changed(){this.generation++;this.controller?.abort();this.revision=null;}
@@ -42,7 +43,7 @@ export class BotWorker {
     if(false){this.controller?.abort();this.store.setBotRuntime({state:'outside_schedule',nextPollAt:null});return;}
     const today=localParts(now,config.timeZone).date;
     const plans=this.store.requests().filter(row=>row.status==='waiting'&&row.service_date<=today);
-    if(!plans.length){this.controller?.abort();this.store.setBotRuntime({state:'no_plans',nextPollAt:null});return;}
+    if(!plans.length&&!this.store.pendingAcceptances().length){this.controller?.abort();this.store.setBotRuntime({state:'no_plans',nextPollAt:null});return;}
     const exp=(()=>{try{return JSON.parse(Buffer.from(config.token.split('.')[1],'base64url').toString()).exp;}catch{return null;}})();
     if(!config.token||typeof exp==='number'&&exp*1000<=now.getTime()){this.store.stopBot('Токен отсутствует или истёк.');this.store.setBotRuntime({state:'auth_error',error:'Введите действующий токен и включите бота заново.',nextPollAt:null});return;}
     const due=Math.max(this.nextAt,this.lastAttempt+config.intervalSeconds*1000);
@@ -51,9 +52,10 @@ export class BotWorker {
     this.busy=true;this.lastAttempt=now.getTime();const generation=this.generation;
     const controller=new AbortController();this.controller=controller;
     const scopesForLog=plans.map(p=>({routeId:p.route_id,startDate:p.service_date})).filter((p,i,all)=>all.findIndex(x=>x.routeId===p.routeId&&x.startDate===p.startDate)===i);
-    this.store.recordBotLog('poll_started',{routes:[...new Set(plans.map(p=>p.route_id))],scopes:scopesForLog,intervalSeconds:config.intervalSeconds,acceptanceEnabled:false});
+    this.store.recordBotLog('poll_started',{routes:[...new Set(plans.map(p=>p.route_id))],scopes:scopesForLog,intervalSeconds:config.intervalSeconds,acceptanceEnabled:config.acceptanceEnabled});
     this.store.setBotRuntime({state:'polling',nextPollAt:null,lastAttemptAt:now.toISOString(),scopes:scopesForLog,error:null});
     try{
+      await this.live.reconcile(config.token,controller.signal);
       const payload=await this.get(`${API}?filter=TO_DELIVERY`,config.token,controller.signal);
       const listReceivedAt=this.clock().toISOString();
       if(!Array.isArray(payload?.data)||payload.data.some(r=>!Number.isSafeInteger(r?.transport_request_id)||!Number.isSafeInteger(r?.route_id)||!Object.hasOwn(r,'supplier_id')))throw new PollError('Неожиданная структура списка WB.');
@@ -71,9 +73,11 @@ export class BotWorker {
         const plan=plans.filter(p=>p.route_id===candidate.routeId).sort((a,b)=>a.priority-b.priority||a.id-b.id)[0];
         candidate.planId=plan.id;
         candidate.curl=previewCurl(candidate.id,plan);
-        candidate.previewNote=candidate.curl?'Только текст команды. Запрос принятия не отправлен.':'Команда не сформирована: требуется подтвердить поле прицепа в API WB.';
+        candidate.previewNote=candidate.curl?(config.acceptanceEnabled?'Команда сформирована; результат реального запроса — в журнале принятия.':'Только текст команды. Запрос принятия не отправлен.'):'Команда не сформирована: требуется подтвердить поле прицепа в API WB.';
       }
-      const events=this.store.recordBotCandidates(candidates,{source:`${API}?filter=TO_DELIVERY`,method:'GET',receivedAt:listReceivedAt,candidateIds:candidates.map(c=>c.id),response:payload});this.store.recordBotLog('poll_completed',{routes:[...new Set(plans.map(p=>p.route_id))],total:payload.data.length,targetRecords:targets.length,candidates:candidates.length,newEvents:events});this.failures=0;this.nextAt=this.clock().getTime()+config.intervalSeconds*1000;
+      const events=this.store.recordBotCandidates(candidates,{source:`${API}?filter=TO_DELIVERY`,method:'GET',receivedAt:listReceivedAt,candidateIds:candidates.map(c=>c.id),response:payload});
+      if(config.acceptanceEnabled)for(const candidate of candidates){if(controller.signal.aborted||generation!==this.generation)break;await this.live.take(candidate,config.token,controller.signal,today);}
+      this.store.recordBotLog('poll_completed',{routes:[...new Set(plans.map(p=>p.route_id))],total:payload.data.length,targetRecords:targets.length,candidates:candidates.length,newEvents:events});this.failures=0;this.nextAt=this.clock().getTime()+config.intervalSeconds*1000;
       this.store.setBotRuntime({state:'waiting',lastSuccessAt:this.clock().toISOString(),nextPollAt:new Date(this.nextAt).toISOString(),total:payload.data.length,targetRecords:targets.length,candidates:candidates.length,newEvents:events,monitoredRoutes:new Set(plans.map(p=>p.route_id)).size,error:null});
     }catch(error){if(controller.signal.aborted||generation!==this.generation)return;
       this.store.recordBotLog('poll_failed',{message:error instanceof PollError?error.message:'Ошибка обработки ответа WB.'});

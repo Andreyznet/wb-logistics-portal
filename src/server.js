@@ -41,7 +41,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       if (req.method === 'POST' && req.headers.origin !== origin) fail(403,'Недопустимый источник запроса.');
       const user = store.session(token);
       if (url.pathname === '/api/session' && req.method === 'GET') return json(200, {
-        serverVersion:'0.9.3',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
+        serverVersion:'0.10.0',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
         today: businessDate(store.timeZone), timeZone: store.timeZone,
       });
       if (url.pathname === '/api/setup' && req.method === 'POST') {
@@ -98,6 +98,8 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
             return json(200,{settings,...store.getBotStatus(user)});
           }
         }
+        const attemptMatch=/^\/api\/bot\/attempts\/(\d+)$/.exec(url.pathname);
+        if(attemptMatch&&req.method==='GET')return json(200,store.getAcceptanceAttempt(Number(attemptMatch[1]),user));
         const snapshotMatch=/^\/api\/bot\/snapshots\/(\d+)$/.exec(url.pathname);
         if(snapshotMatch&&req.method==='GET')return json(200,store.getBotSnapshot(Number(snapshotMatch[1]),user));
         if (url.pathname === '/api/bot/status' && req.method === 'GET') {

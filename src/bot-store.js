@@ -1,8 +1,9 @@
 import { randomBytes, createCipheriv, createDecipheriv, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { createAcceptanceStore } from './acceptance-store.js';
 import { join, dirname } from 'node:path';
 
-const defaults = () => ({ revision:0, enabled:false, intervalSeconds:60, scheduleEnabled:false, days:[1,2,3,4,5], startTime:'08:00', endTime:'20:00', updatedAt:null });
+const defaults = () => ({ revision:0, enabled:false, acceptanceEnabled:false,supplierId:Number(process.env.SUPPLIER_ID||0),intervalSeconds:60, scheduleEnabled:false, days:[1,2,3,4,5], startTime:'08:00', endTime:'20:00', updatedAt:null });
 export function tokenExpiry(token) {
   try { const data=JSON.parse(Buffer.from(token.split('.')[1],'base64url').toString('utf8'));return Number.isFinite(data.exp)&&Number.isFinite(new Date(data.exp*1000).getTime()) ? new Date(data.exp*1000).toISOString() : null; } catch { return null; }
 }
@@ -22,7 +23,7 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
   function encrypt(value){const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',key,iv);const data=Buffer.concat([cipher.update(value,'utf8'),cipher.final()]);return{iv:iv.toString('base64'),tag:cipher.getAuthTag().toString('base64'),data:data.toString('base64')};}
   function decrypt(value){if(!value)return '';const cipher=createDecipheriv('aes-256-gcm',key,Buffer.from(value.iv,'base64'));cipher.setAuthTag(Buffer.from(value.tag,'base64'));return Buffer.concat([cipher.update(Buffer.from(value.data,'base64')),cipher.final()]).toString('utf8');}
   const requireAdmin=actor=>{if(!['admin','super_admin'].includes(actor?.role))fail(403,'Настройки бота доступны только менеджеру или администратору.');};
-  function getBotSettings(actor){requireAdmin(actor);const config=read('bot_config',defaults());const secret=read('bot_token',null);return {...config,timeZone,hasToken:Boolean(secret),tokenExpiresAt:secret?tokenExpiry(decrypt(secret)):null};}
+  function getBotSettings(actor){requireAdmin(actor);const config={...defaults(),...read('bot_config',{})};const secret=read('bot_token',null);return {...config,timeZone,hasToken:Boolean(secret),tokenExpiresAt:secret?tokenExpiry(decrypt(secret)):null};}
   function saveBotSettings(input,actor){
     requireAdmin(actor);
     if(typeof input.enabled!=='boolean'||typeof input.scheduleEnabled!=='boolean')fail(400,'Укажите состояние бота и расписания.');
@@ -34,23 +35,25 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
     if(input.token!==undefined){if(typeof input.token!=='string')fail(400,'Токен должен быть строкой.');supplied=input.token.trim().replace(/^Bearer\s+/i,'');if(supplied&&(supplied.length<10||supplied.length>16384||/\s/.test(supplied)))fail(400,'Проверьте токен: в нём не должно быть пробелов или переносов строк.');}
     if(supplied&&input.clearToken)fail(400,'Нельзя одновременно заменить и удалить токен.');
     return transaction(()=>{
-      const current=read('bot_config',defaults());
+      const current={...defaults(),...read('bot_config',{})};
       if(input.revision!==current.revision)fail(409,'Настройки изменены другим администратором. Обновите страницу.');
       const secret=input.clearToken?null:supplied?encrypt(supplied):read('bot_token',null);
       if(input.enabled&&!secret)fail(400,'Перед включением сохраните токен WB.');
       const exp=secret?tokenExpiry(decrypt(secret)):null;
       if(input.enabled&&exp&&Date.parse(exp)<=Date.now())fail(400,'Срок токена истёк. Введите новый токен.');
+      const acceptanceEnabled=input.acceptanceEnabled??current.acceptanceEnabled,supplierId=input.supplierId??current.supplierId;
+      if(typeof acceptanceEnabled!=='boolean'||!Number.isSafeInteger(supplierId)||supplierId<0||acceptanceEnabled&&supplierId===0)fail(400,'Для боевого режима укажите ID своего перевозчика (supplier_id).');
       write('bot_token',secret);
-      write('bot_config',{revision:current.revision+1,enabled:input.enabled,intervalSeconds:input.intervalSeconds,scheduleEnabled:false,days:input.days,startTime:input.startTime,endTime:input.endTime,updatedAt:new Date().toISOString()});
+      write('bot_config',{revision:current.revision+1,enabled:input.enabled,acceptanceEnabled,supplierId,intervalSeconds:input.intervalSeconds,scheduleEnabled:false,days:input.days,startTime:input.startTime,endTime:input.endTime,updatedAt:new Date().toISOString()});
       audit(actor.id,'bot_settings_updated',null,`Бот ${input.enabled?'включён':'выключен'}; опрос ${input.intervalSeconds} сек.; расписание ${input.scheduleEnabled?'включено':'выключено'}${supplied?'; токен заменён':input.clearToken?'; токен удалён':''}`);
       setBotRuntime(input.enabled?{state:'starting',nextPollAt:null,error:null}:{state:'stopped',nextPollAt:null,error:null});
       return getBotSettings(actor);
     });
   }
-  function botConfig(){return {...read('bot_config',defaults()),token:decrypt(read('bot_token',null)),timeZone};}
+  function botConfig(){return {...defaults(),...read('bot_config',{}),token:decrypt(read('bot_token',null)),timeZone};}
   function stopBot(reason){const config=read('bot_config',defaults());if(config.enabled){write('bot_config',{...config,enabled:false,revision:config.revision+1,updatedAt:new Date().toISOString()});audit(null,'bot_stopped',null,reason);}}
   function setBotRuntime(runtime){const old=read('bot_runtime',{});const value={...old,...runtime};if(JSON.stringify(old)!==JSON.stringify(value))write('bot_runtime',value);return value;}
-  function getBotStatus(actor){requireAdmin(actor);if(actor.role!=='super_admin')return {runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},events:[],logs:[],outcomes:[]};return {outcomes:db.prepare('SELECT * FROM bot_acceptance_results').all().map(r=>({...r,payload:JSON.parse(r.payload)})),serverVersion:'0.9.3',runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},logs:db.prepare('SELECT * FROM bot_logs ORDER BY id DESC LIMIT 100').all().map(row=>({...row,payload:JSON.parse(row.payload)})),events:db.prepare('SELECT id,kind,payload,created_at FROM bot_events ORDER BY id DESC LIMIT 30').all().map(row=>({...row,payload:JSON.parse(row.payload)}))};}
+  function getBotStatus(actor){requireAdmin(actor);if(actor.role!=='super_admin')return {runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},events:[],logs:[],outcomes:[]};return {outcomes:db.prepare('SELECT * FROM bot_acceptance_results').all().map(r=>({...r,payload:JSON.parse(r.payload)})),serverVersion:'0.10.0',runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},logs:db.prepare('SELECT * FROM bot_logs ORDER BY id DESC LIMIT 100').all().map(row=>({...row,payload:JSON.parse(row.payload)})),events:db.prepare('SELECT id,kind,payload,created_at FROM bot_events ORDER BY id DESC LIMIT 30').all().map(row=>({...row,payload:JSON.parse(row.payload)}))};}
   function recordBotCandidates(candidates,snapshot=null){return transaction(()=>{
     const old=new Map(db.prepare('SELECT * FROM bot_observations').all().map(row=>[row.id,row]));
     db.exec('UPDATE bot_observations SET active=0');
@@ -68,7 +71,7 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
   function recordAcceptanceResult({id,routeId,httpStatus,response,expected}){
     if(!Number.isSafeInteger(id)||id<=0)fail(400,'Некорректный ID заявки.');
     const card=response?.data;
-    const success=httpStatus>=200&&httpStatus<300&&response?.success!==false&&card?.transport_request_id===id&&Number.isSafeInteger(card.supplier_id)&&card.supplier_id>0&&expected?.driverId===card.driver_id&&expected?.vehicleId===card.vehicle_id;
+    const success=httpStatus>=200&&httpStatus<300&&response?.success!==false&&card?.transport_request_id===id&&Number.isSafeInteger(card.supplier_id)&&card.supplier_id>0&&expected?.driverId===card.driver_id&&expected?.vehicleId===card.vehicle_id&&(expected.supplierId===undefined||expected.supplierId===card.supplier_id)&&(expected.routeId===undefined||expected.routeId===card.route_id);
     const message=success?'WB подтвердил назначение выбранного водителя и автомобиля.':String(response?.error?.message||response?.message||('Принятие не подтверждено. HTTP '+httpStatus)).slice(0,2000);
     const kind=success?'acceptance_success':'acceptance_error',payload={id,routeId,httpStatus,message},at=new Date().toISOString();
     transaction(()=>{db.prepare('INSERT INTO bot_acceptance_results VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,payload=excluded.payload,created_at=excluded.created_at').run(id,kind,JSON.stringify(payload),at);recordBotLog(kind,payload);
@@ -87,6 +90,7 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
     const result=db.prepare('INSERT INTO acceptance_alerts(user_id,request_id,payload,created_at) VALUES(?,?,?,?)').run(userId,-randomBytes(6).readUIntBE(0,6),JSON.stringify(payload),new Date().toISOString());
     audit(actor.id,'test_alert_created',plan?.id||null,'Тест звука и окна для '+owner.name);return {id:Number(result.lastInsertRowid),recipient:owner.name};
   }
-  return {createTestAlert,userAlerts,acknowledgeAlert,recordAcceptanceResult,getBotSnapshot,recordBotLog,getBotSettings,saveBotSettings,botConfig,stopBot,setBotRuntime,getBotStatus,recordBotCandidates};
+  const acceptanceStore=createAcceptanceStore({db,transaction,botConfig,recordAcceptanceResult,audit,fail});
+  return {...acceptanceStore,createTestAlert,userAlerts,acknowledgeAlert,recordAcceptanceResult,getBotSnapshot,recordBotLog,getBotSettings,saveBotSettings,botConfig,stopBot,setBotRuntime,getBotStatus,recordBotCandidates};
 }
 

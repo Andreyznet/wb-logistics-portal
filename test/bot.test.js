@@ -52,22 +52,22 @@ test('weekly schedule uses local timezone, start inclusive/end exclusive, and pr
   assert.equal(withinSchedule(day,new Date('2026-11-20T15:00:00Z')),false);
   assert.equal(withinSchedule({...c,scheduleEnabled:false},new Date('2026-11-21T18:00:00Z')),true);
 });
-test('worker is read-only, scopes candidates by planned route AND local date, and deduplicates observations',async()=>{
+test('worker is read-only, matches routes regardless of WB date, and deduplicates observations',async()=>{
   const{store,admin}=init();let now=new Date();const calls=[];const date=businessDate();
   const base={transport_request_id:100,route_id:61373,supplier_id:null,car_dt:`${date}T12:00:00+05:00`};
   const fetchImpl=async(url,options)=>{calls.push(url);assert.equal(options.method,'GET');assert.equal(options.headers.Authorization,`Bearer ${testToken}`);assert.equal(options.redirect,'manual');
     if(url.endsWith('TO_DELIVERY'))return Response.json({data:[base,{...base,transport_request_id:101,route_id:66091},{...base,transport_request_id:102,car_dt:'2020-01-01T12:00:00+05:00'}]});
-    return Response.json({data:{...base,request_status:'created',is_closed:false,cubature_value:90,price_per_km:100}});
+    return Response.json({data:{...base,transport_request_id:Number(url.split('/').pop()),request_status:'created',is_closed:false,cubature_value:90,price_per_km:100}});
   };
   try{
     addPlan(store,admin);const worker=new BotWorker(store,{fetchImpl,clock:()=>now});
     await worker.tick();assert.equal(calls.length,0);
-    config(store,admin,{enabled:true});await worker.tick();assert.equal(calls.length,2);assert.equal(store.getBotStatus(admin).events.length,1);assert.equal(store.getBotStatus(admin).events[0].payload.id,100);
+    config(store,admin,{enabled:true});await worker.tick();assert.equal(calls.length,3);assert.equal(store.getBotStatus(admin).events.length,2);assert.equal(store.getBotStatus(admin).events[0].payload.id,102);
     const snapshot=store.getBotStatus(admin);const savedResponse=store.getBotSnapshot(snapshot.events[0].payload.snapshotId,admin);assert.equal(savedResponse.response.data.length,3);assert.equal(savedResponse.response.data[1].route_id,66091);assert.equal(savedResponse.method,'GET');assert.ok(snapshot.logs.some(e=>e.kind==='request_started'));assert.ok(snapshot.logs.some(e=>e.payload.httpStatus===200));
     assert.ok(snapshot.events[0].payload.curl.includes('"vehicle":2,"driver":1'));assert.ok(snapshot.events[0].payload.curl.includes('$env:WB_TOKEN'));assert.equal(JSON.stringify(snapshot).includes(testToken),false);
-    await worker.tick();assert.equal(calls.length,2);
-    now=new Date(now.getTime()+61000);await worker.tick();assert.equal(calls.length,4);assert.equal(store.getBotStatus(admin).events.length,1);
-    config(store,admin,{enabled:false,token:''});worker.changed();await worker.tick();assert.equal(calls.length,4);
+    await worker.tick();assert.equal(calls.length,3);
+    now=new Date(now.getTime()+61000);await worker.tick();assert.equal(calls.length,6);assert.equal(store.getBotStatus(admin).events.length,2);
+    config(store,admin,{enabled:false,token:''});worker.changed();await worker.tick();assert.equal(calls.length,6);
   }finally{store.close();}
 });
 test('no plans and outside schedule make no requests; denied token disables the bot',async()=>{
@@ -131,4 +131,13 @@ test('saved off state immediately overrides old waiting runtime',()=>{
 test('full response snapshots persist, share one copy per event batch and require admin',async()=>{
  const folder=await mkdtemp(join(tmpdir(),'wb-snapshot-'));const file=join(folder,'portal.sqlite');let {store,admin}=init(file);
  try{const candidates=[{id:10,routeId:61373},{id:11,routeId:65522}];const response={data:[{transport_request_id:10,extra:{arbitrary:'unchanged'}}],meta:{count:1}};const input={receivedAt:new Date().toISOString(),response};assert.equal(store.recordBotCandidates(candidates,input),2);const events=store.getBotStatus(admin).events;const id=events[0].payload.snapshotId;assert.equal(id,events[1].payload.snapshotId);assert.deepEqual(store.getBotSnapshot(id,admin),input);assert.throws(()=>store.getBotSnapshot(id,{role:'logist'}));assert.equal(store.recordBotCandidates(candidates,input),0);assert.equal(store.db.prepare('SELECT count(*) AS n FROM bot_snapshots').get().n,1);store.close();({store,admin}=init(file));assert.deepEqual(store.getBotSnapshot(id,admin),input);}finally{store.close();await rm(folder,{recursive:true,force:true});}
+});
+
+test('plan starts on chosen date, remains active on later days and accepts WB dates across midnight',async()=>{
+ const {store,admin}=init();const date=businessDate();let now=new Date(date+'T12:00:00+05:00');let calls=0;
+ try{addPlan(store,admin);config(store,admin,{enabled:true});const worker=new BotWorker(store,{clock:()=>now,fetchImpl:async url=>{calls++;const row={transport_request_id:636001,route_id:61373,supplier_id:null,car_dt:date+'T22:05:40+03:00'};return Response.json({data:url.endsWith('TO_DELIVERY')?[row]:{...row,request_status:'created',is_closed:false}});}});
+ now=new Date(now.getTime()-86400000);await worker.tick();assert.equal(calls,0);
+ now=new Date(now.getTime()+86400000);await worker.tick();assert.equal(calls,2);assert.equal(store.getBotStatus(admin).runtime.candidates,1);
+ now=new Date(now.getTime()+86400000);await worker.tick();assert.equal(calls,4);assert.equal(store.getBotStatus(admin).runtime.candidates,1);
+ }finally{store.close();}
 });

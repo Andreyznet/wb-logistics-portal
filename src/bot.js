@@ -41,7 +41,7 @@ export class BotWorker {
     if(!config.enabled){this.controller?.abort();this.store.setBotRuntime({state:'stopped',nextPollAt:null});return;}
     if(false){this.controller?.abort();this.store.setBotRuntime({state:'outside_schedule',nextPollAt:null});return;}
     const today=localParts(now,config.timeZone).date;
-    const plans=this.store.requests().filter(row=>row.status==='waiting'&&row.service_date>=today);
+    const plans=this.store.requests().filter(row=>row.status==='waiting'&&row.service_date<=today);
     if(!plans.length){this.controller?.abort();this.store.setBotRuntime({state:'no_plans',nextPollAt:null});return;}
     const exp=(()=>{try{return JSON.parse(Buffer.from(config.token.split('.')[1],'base64url').toString()).exp;}catch{return null;}})();
     if(!config.token||typeof exp==='number'&&exp*1000<=now.getTime()){this.store.stopBot('Токен отсутствует или истёк.');this.store.setBotRuntime({state:'auth_error',error:'Введите действующий токен и включите бота заново.',nextPollAt:null});return;}
@@ -50,7 +50,7 @@ export class BotWorker {
     if(now.getTime()<due){this.store.setBotRuntime({state:'waiting',nextPollAt:new Date(due).toISOString(),monitoredRoutes:new Set(plans.map(p=>p.route_id)).size});return;}
     this.busy=true;this.lastAttempt=now.getTime();const generation=this.generation;
     const controller=new AbortController();this.controller=controller;
-    const scopesForLog=plans.map(p=>({routeId:p.route_id,date:p.service_date})).filter((p,i,all)=>all.findIndex(x=>x.routeId===p.routeId&&x.date===p.date)===i);
+    const scopesForLog=plans.map(p=>({routeId:p.route_id,startDate:p.service_date})).filter((p,i,all)=>all.findIndex(x=>x.routeId===p.routeId&&x.startDate===p.startDate)===i);
     this.store.recordBotLog('poll_started',{routes:[...new Set(plans.map(p=>p.route_id))],scopes:scopesForLog,intervalSeconds:config.intervalSeconds,acceptanceEnabled:false});
     this.store.setBotRuntime({state:'polling',nextPollAt:null,lastAttemptAt:now.toISOString(),scopes:scopesForLog,error:null});
     try{
@@ -58,8 +58,8 @@ export class BotWorker {
       const listReceivedAt=this.clock().toISOString();
       if(!Array.isArray(payload?.data)||payload.data.some(r=>!Number.isSafeInteger(r?.transport_request_id)||!Number.isSafeInteger(r?.route_id)||!Object.hasOwn(r,'supplier_id')))throw new PollError('Неожиданная структура списка WB.');
       if(new Set(payload.data.map(r=>r.transport_request_id)).size!==payload.data.length)throw new PollError('Повторные ID в списке WB.');
-      const scopes=new Set(plans.map(p=>`${p.route_id}|${p.service_date}`));
-      const matches=row=>{if(!row?.car_dt||!Number.isFinite(Date.parse(row.car_dt)))return false;return scopes.has(`${row.route_id}|${localParts(new Date(row.car_dt),config.timeZone).date}`);};
+      const routes=new Set(plans.map(p=>p.route_id));
+      const matches=row=>routes.has(row.route_id);
       const targets=payload.data.filter(row=>matches(row));const candidates=[];
       for(const row of targets){if(controller.signal.aborted||generation!==this.generation)return;if(row.supplier_id!==null)continue;
         const result=await this.get(`${API}/${row.transport_request_id}`,config.token,controller.signal);const card=result?.data;
@@ -68,7 +68,7 @@ export class BotWorker {
       }
       if(controller.signal.aborted||generation!==this.generation)return;
       for(const candidate of candidates){
-        const plan=plans.filter(p=>p.route_id===candidate.routeId&&p.service_date===localParts(new Date(candidate.carDt),config.timeZone).date).sort((a,b)=>a.priority-b.priority||a.id-b.id)[0];
+        const plan=plans.filter(p=>p.route_id===candidate.routeId).sort((a,b)=>a.priority-b.priority||a.id-b.id)[0];
         candidate.planId=plan.id;
         candidate.curl=previewCurl(candidate.id,plan);
         candidate.previewNote=candidate.curl?'Только текст команды. Запрос принятия не отправлен.':'Команда не сформирована: требуется подтвердить поле прицепа в API WB.';

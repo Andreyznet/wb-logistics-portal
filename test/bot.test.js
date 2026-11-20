@@ -157,3 +157,9 @@ test('successful assignment alerts only plan owner once and remains until their 
  store.recordAcceptanceResult(data);store.recordAcceptanceResult(data);assert.equal(store.userAlerts(admin).length,1);assert.equal(store.userAlerts(other).length,0);const alert=store.userAlerts(admin)[0];assert.equal(alert.payload.planId,plan.id);assert.throws(()=>store.acknowledgeAlert(alert.id,other));assert.equal(store.userAlerts(admin).length,1);store.acknowledgeAlert(alert.id,admin);assert.equal(store.userAlerts(admin).length,0);store.recordAcceptanceResult(data);assert.equal(store.userAlerts(admin).length,0);
  }finally{store.close();}
 });
+
+test('test alerts use same owner inbox without recording acceptance or changing plans',()=>{
+ const {store,admin}=init();try{addPlan(store,admin);const plan=store.requests()[0];const logist=store.addUser({username:'tester',name:'Tester',password:'password-12345'},admin);assert.throws(()=>store.createTestAlert(plan.id,logist));
+ const before=JSON.stringify(store.requests());store.createTestAlert(plan.id,admin);const alerts=store.userAlerts(admin);assert.equal(alerts.length,1);assert.equal(alerts[0].payload.test,true);assert.equal(alerts[0].payload.planId,plan.id);assert.equal(store.getBotStatus(admin).outcomes.length,0);assert.equal(JSON.stringify(store.requests()),before);store.acknowledgeAlert(alerts[0].id,admin);assert.equal(store.userAlerts(admin).length,0);store.createTestAlert(null,admin);assert.equal(store.userAlerts(admin)[0].payload.test,true);
+ }finally{store.close();}
+});

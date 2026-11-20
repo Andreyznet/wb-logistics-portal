@@ -8,13 +8,26 @@ export function withinSchedule(config,date=new Date()){
   return p.time>=config.startTime?config.days.includes(p.day):p.time<config.endTime&&config.days.includes(p.day===1?7:p.day-1);
 }
 class PollError extends Error{constructor(message,extra={}){super(message);Object.assign(this,extra);}}
+export function previewCurl(id,plan){
+  if(![id,plan.driver_id,plan.vehicle_id].every(n=>Number.isSafeInteger(n)&&n>0))throw new Error('Invalid preview IDs');
+  if(plan.trailer_id)return null; // Field for trailers has not been confirmed in WB payloads.
+  const body=JSON.stringify({vehicle:plan.vehicle_id,driver:plan.driver_id,freelancerID:null,accept_round_trip:false});
+  return `curl.exe --request PUT "${API}/${id}/take-by-supplier" --header "Authorization: Bearer $env:WB_TOKEN" --header "Content-Type: application/json" --data-raw '${body}'`;
+}
 export class BotWorker {
   constructor(store,{fetchImpl=fetch,clock=()=>new Date()}={}){this.store=store;this.fetchImpl=fetchImpl;this.clock=clock;this.busy=false;this.controller=null;this.timer=null;this.revision=null;this.nextAt=0;this.lastAttempt=0;this.generation=0;this.failures=0;}
   start(){this.store.setBotRuntime({state:'stopped',nextPollAt:null});const run=()=>this.tick().catch(()=>this.store.setBotRuntime({state:'error',error:'Ошибка процесса мониторинга.'}));this.timer=setInterval(run,1000);this.timer.unref();void run();}
   stop(){clearInterval(this.timer);this.generation++;this.controller?.abort();}
   changed(){this.generation++;this.controller?.abort();this.revision=null;}
   async get(url,token,signal){
+    const started=Date.now();const requestId=crypto.randomUUID();
+    this.store.recordBotLog('request_started',{requestId,method:'GET',url});
+    try { const data=await this.read(url,token,signal,requestId);this.store.recordBotLog('request_completed',{requestId,method:'GET',url,durationMs:Date.now()-started});return data; }
+    catch(error){this.store.recordBotLog(signal.aborted?'request_cancelled':'request_failed',{requestId,method:'GET',url,durationMs:Date.now()-started,message:error instanceof PollError?error.message:'Чтение запроса прервано.'});throw error;}
+  }
+  async read(url,token,signal,requestId){
     let response;try{response=await this.fetchImpl(url,{method:'GET',redirect:'manual',signal:AbortSignal.any([signal,AbortSignal.timeout(20000)]),headers:{Accept:'application/json',Authorization:`Bearer ${token}`}});}catch(error){if(signal.aborted)throw error;throw new PollError('Сетевая ошибка или тайм-аут WB.');}
+    this.store.recordBotLog('response_received',{requestId,method:'GET',url,httpStatus:response.status});
     if([401,403].includes(response.status))throw new PollError('WB отказал в доступе. Проверьте токен перед повторным включением.',{stop:true});
     if(response.status===429){const retry=response.headers.get('retry-after');const delay=retry&&/^\d+$/.test(retry)?Number(retry)*1000:Math.max(0,Date.parse(retry)-this.clock().getTime())||60000;throw new PollError('WB ограничил частоту запросов. Опрос отложен.',{delay:Math.max(60000,delay)});}
     if(response.status>=300&&response.status<400)throw new PollError('WB перенаправил запрос. Требуется проверка авторизации.',{stop:true});
@@ -51,9 +64,16 @@ export class BotWorker {
         if(matches(card)&&card.request_status==='created'&&card.is_closed===false&&card.supplier_id===null)candidates.push({id:card.transport_request_id,routeId:card.route_id,carDt:card.car_dt,cubature:card.cubature_value??null,pricePerKm:card.price_per_km??null,distanceKm:card.distance_km??null});
       }
       if(controller.signal.aborted||generation!==this.generation)return;
-      const events=this.store.recordBotCandidates(candidates);this.failures=0;this.nextAt=this.clock().getTime()+config.intervalSeconds*1000;
+      for(const candidate of candidates){
+        const plan=plans.filter(p=>p.route_id===candidate.routeId&&p.service_date===localParts(new Date(candidate.carDt),config.timeZone).date).sort((a,b)=>a.priority-b.priority||a.id-b.id)[0];
+        candidate.planId=plan.id;
+        candidate.curl=previewCurl(candidate.id,plan);
+        candidate.previewNote=candidate.curl?'Только текст команды. Запрос принятия не отправлен.':'Команда не сформирована: требуется подтвердить поле прицепа в API WB.';
+      }
+      const events=this.store.recordBotCandidates(candidates);this.store.recordBotLog('poll_completed',{total:payload.data.length,targetRecords:targets.length,candidates:candidates.length,newEvents:events});this.failures=0;this.nextAt=this.clock().getTime()+config.intervalSeconds*1000;
       this.store.setBotRuntime({state:'waiting',lastSuccessAt:this.clock().toISOString(),nextPollAt:new Date(this.nextAt).toISOString(),total:payload.data.length,targetRecords:targets.length,candidates:candidates.length,newEvents:events,monitoredRoutes:new Set(plans.map(p=>p.route_id)).size,error:null});
     }catch(error){if(controller.signal.aborted||generation!==this.generation)return;
+      this.store.recordBotLog('poll_failed',{message:error instanceof PollError?error.message:'Ошибка обработки ответа WB.'});
       if(error.stop){this.store.stopBot(error.message);this.store.setBotRuntime({state:'auth_error',error:error.message,nextPollAt:null});}
       else{this.failures++;const delay=Math.max(config.intervalSeconds*1000,error.delay||0,Math.min(900000,60000*2**Math.min(this.failures-1,4)));this.nextAt=this.clock().getTime()+delay;this.store.setBotRuntime({state:'error',error:error instanceof PollError?error.message:'Ошибка чтения ответа WB.',nextPollAt:new Date(this.nextAt).toISOString()});}
     }finally{this.busy=false;if(this.controller===controller)this.controller=null;}

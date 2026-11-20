@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openStore, businessDate } from '../src/store.js';
-import { BotWorker, withinSchedule } from '../src/bot.js';
+import { BotWorker, withinSchedule, previewCurl } from '../src/bot.js';
 
 const testToken=`header.${Buffer.from(JSON.stringify({exp:Math.floor(Date.now()/1000)+864000})).toString('base64url')}.test-signature`;
 function init(file=':memory:'){
@@ -24,9 +24,9 @@ test('default settings, validation and admin-only access protect bot configurati
   const{store,admin}=init();try{
     const initial=store.getBotSettings(admin);assert.equal(initial.intervalSeconds,60);assert.equal(initial.enabled,false);assert.equal(initial.hasToken,false);
     assert.throws(()=>store.getBotSettings({role:'logist'}),/администратору/);
-    for(const extra of [{intervalSeconds:9},{intervalSeconds:1.5},{days:[1,1]},{scheduleEnabled:true,days:[]},{scheduleEnabled:true,startTime:'08:00',endTime:'08:00'}])assert.throws(()=>config(store,admin,extra));
+    for(const extra of [{intervalSeconds:2},{intervalSeconds:1.5},{days:[1,1]},{scheduleEnabled:true,days:[]},{scheduleEnabled:true,startTime:'08:00',endTime:'08:00'}])assert.throws(()=>config(store,admin,extra));
     assert.throws(()=>store.saveBotSettings({...initial,enabled:true},admin),/токен/);
-    const saved=config(store,admin,{enabled:true});assert.equal(saved.hasToken,true);assert.equal(saved.revision,1);
+    const saved=config(store,admin,{enabled:true,intervalSeconds:3});assert.equal(saved.intervalSeconds,3);assert.equal(saved.hasToken,true);assert.equal(saved.revision,1);
     assert.equal(JSON.stringify(saved).includes(testToken),false);assert.equal(JSON.stringify(store.activity()).includes(testToken),false);
     assert.throws(()=>store.saveBotSettings({...initial,token:testToken},admin),/другим администратором/);
   }finally{store.close();}
@@ -63,6 +63,8 @@ test('worker is read-only, scopes candidates by planned route AND local date, an
     addPlan(store,admin);const worker=new BotWorker(store,{fetchImpl,clock:()=>now});
     await worker.tick();assert.equal(calls.length,0);
     config(store,admin,{enabled:true});await worker.tick();assert.equal(calls.length,2);assert.equal(store.getBotStatus(admin).events.length,1);assert.equal(store.getBotStatus(admin).events[0].payload.id,100);
+    const snapshot=store.getBotStatus(admin);assert.ok(snapshot.logs.some(e=>e.kind==='request_started'));assert.ok(snapshot.logs.some(e=>e.payload.httpStatus===200));
+    assert.ok(snapshot.events[0].payload.curl.includes('"vehicle":2,"driver":1'));assert.ok(snapshot.events[0].payload.curl.includes('$env:WB_TOKEN'));assert.equal(JSON.stringify(snapshot).includes(testToken),false);
     await worker.tick();assert.equal(calls.length,2);
     now=new Date(now.getTime()+61000);await worker.tick();assert.equal(calls.length,4);assert.equal(store.getBotStatus(admin).events.length,1);
     config(store,admin,{enabled:false,token:''});worker.changed();await worker.tick();assert.equal(calls.length,4);
@@ -110,3 +112,9 @@ test('rate limits respect Retry-After and a malformed snapshot cannot erase reco
 });
 
 
+
+test('preview uses validated IDs, never embeds credentials and refuses unconfirmed trailer payload',()=>{
+  assert.ok(previewCurl(123,{driver_id:4,vehicle_id:5,trailer_id:null}).includes('/123/take-by-supplier'));
+  assert.equal(previewCurl(123,{driver_id:4,vehicle_id:5,trailer_id:6}),null);
+  assert.throws(()=>previewCurl('123;other',{driver_id:4,vehicle_id:5}));
+});

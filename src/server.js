@@ -41,7 +41,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       if (req.method === 'POST' && req.headers.origin !== origin) fail(403,'Недопустимый источник запроса.');
       const user = store.session(token);
       if (url.pathname === '/api/session' && req.method === 'GET') return json(200, {
-        serverVersion:'0.9.0',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
+        serverVersion:'0.9.1',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
         today: businessDate(store.timeZone), timeZone: store.timeZone,
       });
       if (url.pathname === '/api/setup' && req.method === 'POST') {
@@ -67,6 +67,9 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       }
       if (url.pathname.startsWith('/api/')) {
         if (!user) fail(401,'Войдите в портал.');
+        if(url.pathname==='/api/me/alerts'&&req.method==='GET')return json(200,{data:store.userAlerts(user)});
+        const alertMatch=/^\/api\/me\/alerts\/(\d+)\/ack$/.exec(url.pathname);
+        if(alertMatch&&req.method==='POST')return json(200,store.acknowledgeAlert(Number(alertMatch[1]),user));
         if(url.pathname==='/api/me/avatar'&&req.method==='POST')return json(200,{user:store.saveAvatar(await body(req),user)});
         const avatarMatch=/^\/api\/users\/(\d+)\/avatar$/.exec(url.pathname);
         if(avatarMatch&&req.method==='GET'){const avatar=store.getAvatar(Number(avatarMatch[1]));res.writeHead(200,{...headers,'Content-Type':avatar.mime});return res.end(avatar.image);}

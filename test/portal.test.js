@@ -101,7 +101,7 @@ test('HTTP authentication, roles, same-origin writes, setup closure and full req
     assert.equal(JSON.stringify((await call('/api/activity')).value).includes(secret),false);
     for(const asset of ['/vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css']){const result=await fetch(origin+asset);assert.equal(result.status,200);}
     store.recordBotLog('poll_completed',{routes:[61373,65522,64197],total:300,targetRecords:9,candidates:0,newEvents:0});
-    for(const endpoint of ['/api/bot/settings','/api/bot/status']){const result=await call(endpoint);assert.equal(result.value.serverVersion,'0.9.0');assert.equal(result.value.logs[0].kind,'poll_completed');assert.equal(result.value.logs[0].payload.total,300);assert.equal(JSON.stringify(result.value).includes(secret),false);}
+    for(const endpoint of ['/api/bot/settings','/api/bot/status']){const result=await call(endpoint);assert.equal(result.value.serverVersion,'0.9.1');assert.equal(result.value.logs[0].kind,'poll_completed');assert.equal(result.value.logs[0].payload.total,300);assert.equal(JSON.stringify(result.value).includes(secret),false);}
 
     assert.equal((await call('/api/setup',{}, {extra:{'X-Setup-Token':'test-setup'}})).res.status,409);
     assert.equal((await call('/api/catalog/import',directory)).res.status,200);
@@ -122,6 +122,12 @@ test('HTTP authentication, roles, same-origin writes, setup closure and full req
     assert.equal((await call('/api/catalog/sync',{}, {cookie:logistCookie})).res.status,403);
     assert.equal((await call('/api/requests',undefined,{cookie:logistCookie})).value.data.length,1);
     assert.equal((await call(`/api/requests/${req.value.data.id}/status`,{status:'archived',version:1})).res.status,200);
+    const plan=req.value.data;store.recordAcceptanceResult({id:123456,routeId:plan.route_id,httpStatus:200,expected:{planId:plan.id,driverId:plan.driver_id,vehicleId:plan.vehicle_id},response:{data:{transport_request_id:123456,route_id:plan.route_id,supplier_id:12,driver_id:plan.driver_id,vehicle_id:plan.vehicle_id}}});
+    const alerts=await call('/api/me/alerts');assert.equal(alerts.value.data.length,1);const alertId=alerts.value.data[0].id;
+    assert.equal((await call('/api/me/alerts',undefined,{cookie:logistCookie})).value.data.length,0);
+    assert.equal((await call('/api/me/alerts/'+alertId+'/ack',{}, {cookie:logistCookie})).res.status,404);
+    assert.equal((await call('/api/me/alerts/'+alertId+'/ack',{})).res.status,200);
+    assert.equal((await call('/api/me/alerts')).value.data.length,0);
     const ordinary=await call('/api/users',{username:'ordinary',name:'Ordinary',password:'another-password-123',role:'admin'});assert.equal(ordinary.res.status,201);
     const adminLogin=await call('/api/login',{username:'ordinary',password:'another-password-123'},{cookie:''});const adminCookie=adminLogin.res.headers.get('set-cookie').split(';')[0];
     const restricted=await call('/api/bot/status',undefined,{cookie:adminCookie});assert.equal(restricted.res.status,200);assert.deepEqual(restricted.value.logs,[]);assert.deepEqual(restricted.value.events,[]);

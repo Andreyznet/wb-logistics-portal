@@ -42,3 +42,7 @@ test('429 on PUT respects retry delay and prevents other acceptance in the same 
  const {store}=setup();let puts=0,now=new Date();const worker=new BotWorker(store,{clock:()=>now,fetchImpl:async(url,options)=>{if(options.method==='PUT'){puts++;return Response.json({error:{message:'Rate limit'}},{status:429,headers:{'Retry-After':'180'}});}return Response.json({data:url.endsWith('TO_DELIVERY')?[row(100),row(101)]:row(Number(url.split('/').pop()))});}});
  try{await worker.tick();assert.equal(puts,1);assert.ok(worker.nextAt>=now.getTime()+180000);now=new Date(now.getTime()+61000);await worker.tick();assert.equal(puts,1);}finally{store.close();}
 });
+
+test('admin may delete discovery for replay without clearing pending acceptance protection',()=>{
+ const {store,admin}=setup();try{store.recordBotCandidates([{id:100,routeId:61373,planId:store.requests()[0].id}]);const event=store.getBotStatus(admin).events[0];assert.throws(()=>store.deleteBotEvent(event.id,{id:admin.id,role:'admin'}));assert.throws(()=>store.deleteBotEvent(event.id,{id:admin.id,role:'logist'}));store.claimAcceptance(100,store.requests()[0],Date.now());store.deleteBotEvent(event.id,admin);assert.equal(store.getBotStatus(admin).events.length,0);assert.equal(store.pendingAcceptances().length,1);assert.equal(store.recordBotCandidates([{id:100,routeId:61373,planId:store.requests()[0].id}]),1);assert.equal(store.claimAcceptance(100,store.requests()[0],Date.now()),null);}finally{store.close();}
+});

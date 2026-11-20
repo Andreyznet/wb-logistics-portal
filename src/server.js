@@ -41,7 +41,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       if (req.method === 'POST' && req.headers.origin !== origin) fail(403,'Недопустимый источник запроса.');
       const user = store.session(token);
       if (url.pathname === '/api/session' && req.method === 'GET') return json(200, {
-        user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
+        serverVersion:'0.8.2',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
         today: businessDate(store.timeZone), timeZone: store.timeZone,
       });
       if (url.pathname === '/api/setup' && req.method === 'POST') {
@@ -72,7 +72,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
           return json(200,{enabled:c.enabled,runtime:r.runtime});
         }
         if(url.pathname==='/api/catalog/sync' && req.method==='POST') {
-          if(!['admin','super_admin'].includes(user.role))fail(403,'Обновление доступно администратору.');
+          if(!['admin','super_admin'].includes(user.role))fail(403,'Обновление доступно менеджеру и администратору.');
           const c=store.botConfig();if(!c.token)fail(400,'Сначала сохраните токен в настройках бота.');
           const headers={Authorization:`Bearer ${c.token}`};const api=makeDirectoryApi({logisticsHeaders:headers,driveHeaders:headers});
           try {
@@ -83,7 +83,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
           } catch {fail(502,'Не удалось обновить справочник WB. Проверьте токен и повторите позже.');}
         }
         if (url.pathname === '/api/bot/settings') {
-          if(!['admin','super_admin'].includes(user.role))fail(403,'Настройки бота доступны только администратору.');
+          if(!['admin','super_admin'].includes(user.role))fail(403,'Настройки бота доступны менеджеру и администратору.');
           if(req.method==='GET')return json(200,{settings:store.getBotSettings(user),...store.getBotStatus(user)});
           if(req.method==='POST'){
             const settings=store.saveBotSettings(await body(req),user);
@@ -94,7 +94,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         const snapshotMatch=/^\/api\/bot\/snapshots\/(\d+)$/.exec(url.pathname);
         if(snapshotMatch&&req.method==='GET')return json(200,store.getBotSnapshot(Number(snapshotMatch[1]),user));
         if (url.pathname === '/api/bot/status' && req.method === 'GET') {
-          if(!['admin','super_admin'].includes(user.role))fail(403,'Состояние бота доступно только администратору.');
+          if(!['admin','super_admin'].includes(user.role))fail(403,'Состояние бота доступно менеджеру и администратору.');
           return json(200,{settings:store.getBotSettings(user),...store.getBotStatus(user)});
         }
         if (url.pathname === '/api/logout' && req.method === 'POST') { store.logout(token); return json(200,{ok:true},{'Set-Cookie':cookie('')}); }
@@ -106,7 +106,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
           const input = await body(req);
           return json(200,{data:match[2] ? store.changeStatus(Number(match[1]),input.status,input.version,user) : store.saveRequest(input,user,Number(match[1]))});
         }
-        if (url.pathname === '/api/activity' && req.method === 'GET') {if(user.role==='logist')fail(403,'История доступна администратору.');return json(200,{data:store.activity()});}
+        if (url.pathname === '/api/activity' && req.method === 'GET') {if(user.role==='logist')fail(403,'История доступна менеджеру и администратору.');return json(200,{data:store.activity()});}
         if (url.pathname === '/api/users' && req.method === 'GET') return json(200,{data:store.users()});
         const userMatch=/^\/api\/users\/(\d+)$/.exec(url.pathname);
         if(userMatch&&req.method==='POST')return json(200,{user:store.updateUser(Number(userMatch[1]),await body(req),user)});

@@ -60,14 +60,14 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     if (!/^[a-z0-9._-]{3,64}$/.test(username)) fail(400, 'Логин: от 3 до 64 латинских букв, цифр, точек или дефисов.');
     if (!name) fail(400, 'Укажите имя сотрудника.');
     if (typeof password !== 'string' || password.length < 10 || password.length > 200) fail(400, 'Пароль должен содержать от 10 до 200 символов.');
-    if (!setup && !['admin','super_admin'].includes(actor?.role)) fail(403, 'Действие доступно администратору.');
+    if (!setup && !['admin','super_admin'].includes(actor?.role)) fail(403, 'Действие доступно менеджеру или администратору.');
     const hash = passwordHash(password);
     return transaction(() => {
       if (setup && userCount()) fail(409, 'Первоначальная настройка уже выполнена.');
       if (db.prepare('SELECT id FROM users WHERE username=?').get(username)) fail(409, 'Такой логин уже существует.');
       const role = setup ? 'super_admin' : input.role||'logist';
       if(!['super_admin','admin','logist'].includes(role))fail(400,'Неизвестная роль.');
-      if(!setup&&role==='super_admin'&&actor.role!=='super_admin')fail(403,'Только суперадмин может назначить суперадмина.');
+      if(!setup&&role==='super_admin'&&actor.role!=='super_admin')fail(403,'Только администратор может назначить администратора.');
       const result = db.prepare('INSERT INTO users(username,name,password_hash,role,created_at) VALUES(?,?,?,?,?)').run(username, name, hash, role, now());
       const user = publicUser(db.prepare('SELECT * FROM users WHERE id=?').get(result.lastInsertRowid));
       audit(actor?.id ?? user.id, 'user_created', null, name);
@@ -75,13 +75,13 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     });
   }
   function updateUser(id,input,actor){
-    if(!['super_admin','admin'].includes(actor?.role))fail(403,'Доступно только администратору.');
+    if(!['super_admin','admin'].includes(actor?.role))fail(403,'Доступно только менеджеру или администратору.');
     return transaction(()=>{
       const old=db.prepare('SELECT * FROM users WHERE id=?').get(id);if(!old)fail(404,'Пользователь не найден.');
       const role=input.role??old.role,name=clean(input.name??old.name,100),username=clean(input.username??old.username,64).toLowerCase();
       if(!['super_admin','admin','logist'].includes(role))fail(400,'Неизвестная роль.');
-      if(actor.role!=='super_admin'&&(old.role==='super_admin'||role==='super_admin'))fail(403,'Только суперадмин может менять суперадмина.');
-      if(old.role==='super_admin'&&role!=='super_admin'&&db.prepare("SELECT count(*) AS n FROM users WHERE role='super_admin'").get().n<=1)fail(409,'Нельзя понизить последнего суперадмина.');
+      if(actor.role!=='super_admin'&&(old.role==='super_admin'||role==='super_admin'))fail(403,'Только администратор может менять администратора.');
+      if(old.role==='super_admin'&&role!=='super_admin'&&db.prepare("SELECT count(*) AS n FROM users WHERE role='super_admin'").get().n<=1)fail(409,'Нельзя понизить последнего администратора.');
       if(!name||!/^[a-z0-9._-]{3,64}$/.test(username))fail(400,'Проверьте имя и логин.');
       if(db.prepare('SELECT id FROM users WHERE username=? AND id<>?').get(username,id))fail(409,'Такой логин уже существует.');
       let hash=old.password_hash;if(input.password){if(typeof input.password!=='string'||input.password.length<10||input.password.length>200)fail(400,'Пароль должен содержать от 10 до 200 символов.');hash=passwordHash(input.password);}

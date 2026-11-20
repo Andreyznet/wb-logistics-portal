@@ -16,8 +16,8 @@ export function previewCurl(id,plan){
   return `curl.exe --request PUT "${API}/${id}/take-by-supplier" --header "Authorization: Bearer $env:WB_TOKEN" --header "Content-Type: application/json" --data-raw '${body}'`;
 }
 export class BotWorker {
-  constructor(store,{fetchImpl=fetch,clock=()=>new Date()}={}){this.store=store;this.fetchImpl=fetchImpl;this.clock=clock;this.busy=false;this.controller=null;this.timer=null;this.revision=null;this.nextAt=0;this.lastAttempt=0;this.generation=0;this.failures=0;this.live=new LiveAcceptance(store,this);}
-  start(){this.store.setBotRuntime({state:'stopped',nextPollAt:null});const run=()=>this.tick().catch(()=>this.store.setBotRuntime({state:'error',error:'Ошибка процесса мониторинга.'}));this.timer=setInterval(run,1000);this.timer.unref();void run();}
+  constructor(store,{fetchImpl=fetch,clock=()=>new Date()}={}){this.version='0.10.2';this.store=store;this.fetchImpl=fetchImpl;this.clock=clock;this.busy=false;this.controller=null;this.timer=null;this.revision=null;this.nextAt=0;this.lastAttempt=0;this.generation=0;this.failures=0;this.live=new LiveAcceptance(store,this);}
+  start(){this.store.setBotRuntime({state:'stopped',nextPollAt:null,workerVersion:this.version});const run=()=>this.tick().catch(()=>this.store.setBotRuntime({state:'error',error:'Ошибка процесса мониторинга.'}));this.timer=setInterval(run,1000);this.timer.unref();void run();}
   stop(){clearInterval(this.timer);this.generation++;this.controller?.abort();}
   changed(){this.generation++;this.controller?.abort();this.revision=null;}
   async get(url,token,signal){
@@ -52,8 +52,8 @@ export class BotWorker {
     this.busy=true;this.lastAttempt=now.getTime();const generation=this.generation;
     const controller=new AbortController();this.controller=controller;
     const scopesForLog=plans.map(p=>({routeId:p.route_id,startDate:p.service_date})).filter((p,i,all)=>all.findIndex(x=>x.routeId===p.routeId&&x.startDate===p.startDate)===i);
-    this.store.recordBotLog('poll_started',{routes:[...new Set(plans.map(p=>p.route_id))],scopes:scopesForLog,intervalSeconds:config.intervalSeconds,acceptanceEnabled:config.acceptanceEnabled});
-    this.store.setBotRuntime({state:'polling',nextPollAt:null,lastAttemptAt:now.toISOString(),scopes:scopesForLog,error:null});
+    this.store.recordBotLog('poll_started',{routes:[...new Set(plans.map(p=>p.route_id))],scopes:scopesForLog,intervalSeconds:config.intervalSeconds,acceptanceEnabled:config.acceptanceEnabled,workerVersion:this.version,settingsRevision:config.revision});
+    this.store.setBotRuntime({state:'polling',nextPollAt:null,lastAttemptAt:now.toISOString(),scopes:scopesForLog,workerVersion:this.version,acceptanceEnabled:config.acceptanceEnabled,error:null});
     try{
       await this.live.reconcile(config.token,controller.signal);
       const payload=await this.get(`${API}?filter=TO_DELIVERY`,config.token,controller.signal);

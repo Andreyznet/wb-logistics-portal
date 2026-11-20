@@ -101,7 +101,7 @@ test('HTTP authentication, roles, same-origin writes, setup closure and full req
     assert.equal(JSON.stringify((await call('/api/activity')).value).includes(secret),false);
     for(const asset of ['/vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css']){const result=await fetch(origin+asset);assert.equal(result.status,200);}
     store.recordBotLog('poll_completed',{routes:[61373,65522,64197],total:300,targetRecords:9,candidates:0,newEvents:0});
-    for(const endpoint of ['/api/bot/settings','/api/bot/status']){const result=await call(endpoint);assert.equal(result.value.serverVersion,'0.8.2');assert.equal(result.value.logs[0].kind,'poll_completed');assert.equal(result.value.logs[0].payload.total,300);assert.equal(JSON.stringify(result.value).includes(secret),false);}
+    for(const endpoint of ['/api/bot/settings','/api/bot/status']){const result=await call(endpoint);assert.equal(result.value.serverVersion,'0.9.0');assert.equal(result.value.logs[0].kind,'poll_completed');assert.equal(result.value.logs[0].payload.total,300);assert.equal(JSON.stringify(result.value).includes(secret),false);}
 
     assert.equal((await call('/api/setup',{}, {extra:{'X-Setup-Token':'test-setup'}})).res.status,409);
     assert.equal((await call('/api/catalog/import',directory)).res.status,200);
@@ -128,6 +128,11 @@ test('HTTP authentication, roles, same-origin writes, setup closure and full req
     assert.equal((await call('/api/bot/snapshots/'+snapshotId,undefined,{cookie:adminCookie})).res.status,403);
     assert.equal((await call('/api/users',{username:'elevated',name:'Elevated',password:'another-password-123',role:'super_admin'},{cookie:adminCookie})).res.status,403);
     assert.equal((await call('/api/users/'+created.value.user.id,{role:'logist'},{cookie:adminCookie})).res.status,403);
+    for(const name of ['cat','frog','robot','bear','owl'])assert.equal((await call('/avatars/'+name+'.svg')).res.status,200);
+    assert.equal((await call('/api/me/avatar',{preset:'owl'},{cookie:logistCookie})).res.status,200);
+    assert.equal((await call('/api/session',undefined,{cookie:logistCookie})).value.user.avatar,'/avatars/owl.svg');
+    assert.equal((await call('/api/me/avatar',{image:'data:image/svg+xml;base64,PHN2Zy8+'},{cookie:logistCookie})).res.status,400);
+    assert.equal((await call('/api/me/avatar',{preset:'cat'},{cookie:''})).res.status,401);
     assert.equal((await call('/api/users',undefined,{cookie:logistCookie})).res.status,200);for(const endpoint of ['/api/session','/api/catalog','/api/requests','/api/users','/api/bot/public-status'])assert.equal((await call(endpoint,undefined,{cookie:logistCookie})).res.status,200);
     assert.equal((await call('/api/users/'+ordinary.value.data.id,{role:'logist'})).res.status,200);
     assert.equal((await call('/api/bot/status',undefined,{cookie:adminCookie})).res.status,403);

@@ -41,7 +41,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       if (req.method === 'POST' && req.headers.origin !== origin) fail(403,'Недопустимый источник запроса.');
       const user = store.session(token);
       if (url.pathname === '/api/session' && req.method === 'GET') return json(200, {
-        serverVersion:'0.8.2',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
+        serverVersion:'0.9.0',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
         today: businessDate(store.timeZone), timeZone: store.timeZone,
       });
       if (url.pathname === '/api/setup' && req.method === 'POST') {
@@ -67,6 +67,9 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       }
       if (url.pathname.startsWith('/api/')) {
         if (!user) fail(401,'Войдите в портал.');
+        if(url.pathname==='/api/me/avatar'&&req.method==='POST')return json(200,{user:store.saveAvatar(await body(req),user)});
+        const avatarMatch=/^\/api\/users\/(\d+)\/avatar$/.exec(url.pathname);
+        if(avatarMatch&&req.method==='GET'){const avatar=store.getAvatar(Number(avatarMatch[1]));res.writeHead(200,{...headers,'Content-Type':avatar.mime});return res.end(avatar.image);}
         if(url.pathname==='/api/bot/public-status' && req.method==='GET') {
           const c=store.botConfig(); const r=store.getBotStatus({role:'admin'});
           return json(200,{enabled:c.enabled,runtime:r.runtime});
@@ -116,7 +119,8 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       }
       if (req.method !== 'GET') fail(404,'Страница не найдена.');
       const files = { '/':'index.html','/app.js':'app.js','/styles.css':'styles.css','/vendor/tabulator/tabulator.min.js':'vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css':'vendor/tabulator/tabulator.min.css','/favicon.svg':'favicon.svg' };
-      const file = files[url.pathname];
+      const preset=/^\/avatars\/(cat|frog|robot|bear|owl)\.svg$/.test(url.pathname);
+      const file = preset?url.pathname.slice(1):files[url.pathname];
       if (!file) fail(404,'Страница не найдена.');
       const mime = file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html';
       res.writeHead(200,{...headers,'Content-Type':`${mime}; charset=utf-8`}); res.end(await readFile(resolve(publicDir,file)));

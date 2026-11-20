@@ -42,16 +42,32 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     db.exec("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE;");
     try{db.exec("CREATE TABLE users_roles(id INTEGER PRIMARY KEY,username TEXT UNIQUE NOT NULL,name TEXT NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('super_admin','admin','logist')),created_at TEXT NOT NULL); INSERT INTO users_roles SELECT * FROM users; UPDATE users_roles SET role='super_admin' WHERE id=(SELECT min(id) FROM users_roles WHERE role='admin'); DROP TABLE users; ALTER TABLE users_roles RENAME TO users; COMMIT;");}catch(e){db.exec('ROLLBACK');throw e;}finally{db.exec('PRAGMA foreign_keys=ON');}
   }
+  db.exec('CREATE TABLE IF NOT EXISTS user_avatars(user_id INTEGER PRIMARY KEY REFERENCES users(id),preset TEXT,image BLOB,mime TEXT,revision TEXT NOT NULL)');
+  const defaultAvatar=id=>'/avatars/'+['cat','frog','robot','bear','owl'][(id-1)%5]+'.svg';
+  const avatarUrl=id=>{const value=db.prepare('SELECT preset,revision FROM user_avatars WHERE user_id=?').get(id);return value?value.preset?'/avatars/'+value.preset+'.svg':'/api/users/'+id+'/avatar?v='+value.revision:defaultAvatar(id);};
   const now = () => new Date().toISOString();
   function transaction(fn) {
     db.exec('BEGIN IMMEDIATE');
     try { const result = fn(); db.exec('COMMIT'); return result; }
     catch (error) { db.exec('ROLLBACK'); throw error; }
   }
-  const publicUser = row => row ? { id: row.id, username: row.username, name: row.name, role: row.role } : null;
+  const publicUser = row => row ? { id: row.id, username: row.username, name: row.name, role: row.role, avatar:avatarUrl(row.id) } : null;
   function audit(userId, action, requestId = null, detail = '') {
     db.prepare('INSERT INTO audit(user_id,action,request_id,detail,created_at) VALUES(?,?,?,?,?)').run(userId, action, requestId, detail, now());
   }
+  function saveAvatar(input,actor){
+    if(!actor?.id||!db.prepare('SELECT id FROM users WHERE id=?').get(actor.id))fail(401,'Войдите в аккаунт.');
+    let preset=null,image=null,mime=null;
+    if(input.preset!==undefined){if(!['cat','frog','robot','bear','owl'].includes(input.preset))fail(400,'Выберите стандартный аватар.');preset=input.preset;}
+    else{
+      const match=typeof input.image==='string'&&/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec(input.image);if(!match||match[2].length>350000)fail(400,'Нужна картинка PNG, JPEG или WebP до 256 КБ.');
+      mime=match[1];image=Buffer.from(match[2],'base64');
+      const valid=mime==='image/png'?image.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])):mime==='image/jpeg'?image[0]===255&&image[1]===216&&image[2]===255:image.toString('ascii',0,4)==='RIFF'&&image.toString('ascii',8,12)==='WEBP';
+      if(!valid||image.length>262144)fail(400,'Некорректный формат картинки.');
+    }
+    return transaction(()=>{db.prepare('INSERT INTO user_avatars VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET preset=excluded.preset,image=excluded.image,mime=excluded.mime,revision=excluded.revision').run(actor.id,preset,image,mime,randomBytes(8).toString('hex'));audit(actor.id,'avatar_updated',null,'Аватар обновлён');return publicUser(db.prepare('SELECT * FROM users WHERE id=?').get(actor.id));});
+  }
+  function getAvatar(id){const row=db.prepare('SELECT image,mime FROM user_avatars WHERE user_id=?').get(id);if(!row?.image)fail(404,'Картинка не найдена.');return row;}
   function userCount() { return db.prepare('SELECT count(*) AS n FROM users').get().n; }
   function addUser(input, actor = null, setup = false) {
     const username = clean(input.username, 64).toLowerCase();
@@ -208,9 +224,9 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     });
   }
   const botStore=createBotStore({db,file,timeZone,audit,transaction,fail});
-  return { ...botStore, db, timeZone, userCount, addUser, updateUser, login, createSession, session, importDirectory, catalog, saveRequest, changeStatus,
+  return { ...botStore, db, timeZone, userCount, addUser, updateUser, saveAvatar, getAvatar, login, createSession, session, importDirectory, catalog, saveRequest, changeStatus,
     logout: token => db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hashSession(token || '')),
-    users: () => db.prepare('SELECT id,username,name,role,created_at FROM users ORDER BY name').all(),
+    users: () => db.prepare('SELECT id,username,name,role,created_at FROM users ORDER BY name').all().map(user=>({...user,avatar:avatarUrl(user.id)})),
     requests: () => db.prepare('SELECT r.*,u.name AS created_by_name FROM requests r JOIN users u ON r.created_by=u.id ORDER BY r.service_date,r.priority,r.id').all(),
     activity: () => db.prepare('SELECT a.*,u.name AS actor FROM audit a LEFT JOIN users u ON a.user_id=u.id ORDER BY a.id DESC LIMIT 200').all(),
     close: () => db.close(),

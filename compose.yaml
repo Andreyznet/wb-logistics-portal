@@ -1,0 +1,23 @@
+services:
+  portal:
+    build: .
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8787
+      DATABASE_FILE: /app/data/portal.sqlite
+      PORTAL_TIMEZONE: Asia/Yekaterinburg
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      SETUP_TOKEN: ${SETUP_TOKEN:?Set SETUP_TOKEN in .env before deployment}
+    volumes:
+      - portal_data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  portal_data:

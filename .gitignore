@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+auth.json
+drivers-auth.json
+bot-secret.key
+*.log
+data/
+*.sqlite*
+node_modules/

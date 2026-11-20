@@ -1,0 +1,195 @@
+import { DatabaseSync } from 'node:sqlite';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
+import { createBotStore } from './bot-store.js';
+
+export class AppError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+export const fail = (status, message) => { throw new AppError(status, message); };
+export const hashSession = token => createHash('sha256').update(token).digest('hex');
+export function passwordHash(password) {
+  const salt = randomBytes(16).toString('hex');
+  return `${salt}:${scryptSync(password, salt, 64).toString('hex')}`;
+}
+export function passwordMatches(password, hash) {
+  const [salt, key] = hash.split(':');
+  const actual = scryptSync(password, salt, 64);
+  const expected = Buffer.from(key, 'hex');
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+export function businessDate(timeZone = 'Asia/Yekaterinburg') {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+const clean = (value, max = 200) => typeof value === 'string' ? value.trim().slice(0, max) : '';
+const integer = value => (typeof value === 'number' || typeof value === 'string' && /^\d+$/.test(value)) && Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null;
+
+export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
+  if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true });
+  const db = new DatabaseSync(file);
+  db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
+    CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, name TEXT NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin','logist')), created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), expires_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS catalog(kind TEXT NOT NULL, id INTEGER NOT NULL, label TEXT NOT NULL, payload TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(kind,id));
+    CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS requests(id INTEGER PRIMARY KEY AUTOINCREMENT, route_id INTEGER NOT NULL, service_date TEXT NOT NULL, priority INTEGER NOT NULL DEFAULT 1, driver_id INTEGER NOT NULL, vehicle_id INTEGER NOT NULL, trailer_id INTEGER, driver_label TEXT NOT NULL, vehicle_label TEXT NOT NULL, trailer_label TEXT, note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL CHECK(status IN ('waiting','paused','archived')), version INTEGER NOT NULL DEFAULT 1, created_by INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS requests_date_status ON requests(service_date,status);
+    CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id), action TEXT NOT NULL, request_id INTEGER, detail TEXT NOT NULL, created_at TEXT NOT NULL);
+  `);
+  const now = () => new Date().toISOString();
+  function transaction(fn) {
+    db.exec('BEGIN IMMEDIATE');
+    try { const result = fn(); db.exec('COMMIT'); return result; }
+    catch (error) { db.exec('ROLLBACK'); throw error; }
+  }
+  const publicUser = row => row ? { id: row.id, username: row.username, name: row.name, role: row.role } : null;
+  function audit(userId, action, requestId = null, detail = '') {
+    db.prepare('INSERT INTO audit(user_id,action,request_id,detail,created_at) VALUES(?,?,?,?,?)').run(userId, action, requestId, detail, now());
+  }
+  function userCount() { return db.prepare('SELECT count(*) AS n FROM users').get().n; }
+  function addUser(input, actor = null, setup = false) {
+    const username = clean(input.username, 64).toLowerCase();
+    const name = clean(input.name, 100);
+    const password = input.password;
+    if (!/^[a-z0-9._-]{3,64}$/.test(username)) fail(400, 'Логин: от 3 до 64 латинских букв, цифр, точек или дефисов.');
+    if (!name) fail(400, 'Укажите имя сотрудника.');
+    if (typeof password !== 'string' || password.length < 10 || password.length > 200) fail(400, 'Пароль должен содержать от 10 до 200 символов.');
+    if (!setup && actor?.role !== 'admin') fail(403, 'Действие доступно администратору.');
+    const hash = passwordHash(password);
+    return transaction(() => {
+      if (setup && userCount()) fail(409, 'Первоначальная настройка уже выполнена.');
+      if (db.prepare('SELECT id FROM users WHERE username=?').get(username)) fail(409, 'Такой логин уже существует.');
+      const role = setup ? 'admin' : 'logist';
+      const result = db.prepare('INSERT INTO users(username,name,password_hash,role,created_at) VALUES(?,?,?,?,?)').run(username, name, hash, role, now());
+      const user = publicUser(db.prepare('SELECT * FROM users WHERE id=?').get(result.lastInsertRowid));
+      audit(actor?.id ?? user.id, 'user_created', null, name);
+      return user;
+    });
+  }
+  // Use a real password hash for unknown usernames as well, to avoid an obvious timing distinction.
+  const dummyHash = passwordHash(randomBytes(24).toString('hex'));
+  function login(username, password) {
+    const row = db.prepare('SELECT * FROM users WHERE username=?').get(clean(username, 64).toLowerCase());
+    const good = passwordMatches(typeof password === 'string' ? password.slice(0, 200) : '', row?.password_hash || dummyHash);
+    if (!row || !good) fail(401, 'Неверный логин или пароль.');
+    return publicUser(row);
+  }
+  function createSession(userId) {
+    const token = randomBytes(32).toString('base64url');
+    db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
+    db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(hashSession(token), userId, Date.now() + 86400000);
+    return token;
+  }
+  function session(token) {
+    if (!token || token.length > 200) return null;
+    return publicUser(db.prepare('SELECT u.* FROM users u JOIN sessions s ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?').get(hashSession(token), Date.now()));
+  }
+  function importDirectory(input, actorId = null) {
+    const source = input?.transport ?? input?.data;
+    if (!source || ['drivers', 'vehicles', 'trailers'].some(k => !Array.isArray(source[k]))) fail(400, 'Нужен directory.json с массивами drivers, vehicles и trailers внутри transport (или data).');
+    const kinds = { drivers: 'driver', vehicles: 'vehicle', trailers: 'trailer' };
+    const rows = [];
+    for (const [collection, kind] of Object.entries(kinds)) {
+      if (source[collection].length > 20000) fail(400, 'Слишком большой справочник.');
+      const ids = new Set();
+      for (const raw of source[collection]) {
+        const id = integer(raw?.id);
+        if (!id || ids.has(id)) fail(400, `Некорректный или повторный ID в ${collection}.`);
+        ids.add(id);
+        const name = clean(raw.name, 180);
+        const plate = clean(raw.number_plate, 40);
+        const label = kind === 'driver' ? name || `Водитель ID ${id}` : plate ? `${plate}${name && name !== plate ? ` · ${name}` : ''}` : name || `${kind === 'vehicle' ? 'Автомобиль' : 'Прицеп'} ID ${id}`;
+        rows.push({ kind, id, label, payload: JSON.stringify({ id, name, number_plate: plate, vehicle_type_id: raw.vehicle_type_id ?? null }) });
+      }
+    }
+    const vehicleIds = new Set(rows.filter(r => r.kind === 'vehicle').map(r => r.id));
+    if (rows.some(r => r.kind === 'trailer' && vehicleIds.has(r.id))) fail(400, 'Один ID указан одновременно для автомобиля и прицепа.');
+    return transaction(() => {
+      db.exec('UPDATE catalog SET active=0');
+      const insert = db.prepare('INSERT INTO catalog(kind,id,label,payload,active) VALUES(?,?,?,?,1) ON CONFLICT(kind,id) DO UPDATE SET label=excluded.label,payload=excluded.payload,active=1');
+      for (const row of rows) insert.run(row.kind, row.id, row.label, row.payload);
+      db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('directory_imported_at', now());
+      audit(actorId, 'directory_imported', null, `Водителей: ${source.drivers.length}, авто: ${source.vehicles.length}, прицепов: ${source.trailers.length}`);
+      return { drivers: source.drivers.length, vehicles: source.vehicles.length, trailers: source.trailers.length };
+    });
+  }
+  function catalog() {
+    const result = { drivers: [], vehicles: [], trailers: [], importedAt: db.prepare("SELECT value FROM settings WHERE key='directory_imported_at'").get()?.value ?? null };
+    const names = { driver: 'drivers', vehicle: 'vehicles', trailer: 'trailers' };
+    for (const row of db.prepare('SELECT * FROM catalog WHERE active=1 ORDER BY label COLLATE NOCASE').all()) {
+      result[names[row.kind]].push({ ...JSON.parse(row.payload), label: row.label });
+    }
+    return result;
+  }
+  function entry(kind, id) {
+    const row = db.prepare('SELECT label FROM catalog WHERE kind=? AND id=? AND active=1').get(kind, id);
+    if (!row) fail(400, `Выбранный ${kind === 'driver' ? 'водитель' : kind === 'vehicle' ? 'автомобиль' : 'прицеп'} отсутствует в актуальном справочнике.`);
+    return row.label;
+  }
+  function validateRequest(input, old) {
+    const routeId = integer(input.routeId);
+    const date = input.serviceDate;
+    const priority = integer(input.priority ?? 1);
+    const driverId = integer(input.driverId), vehicleId = integer(input.vehicleId);
+    const trailerId = input.trailerId == null || input.trailerId === '' ? null : integer(input.trailerId);
+    if (!routeId || routeId > 2147483647) fail(400, 'Укажите корректный номер маршрута.');
+    if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(`${date}T00:00:00Z`)) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date) fail(400, 'Укажите корректную дату подачи.');
+    if (date < businessDate(timeZone) && date !== old?.service_date) fail(400, 'Дата подачи не может быть в прошлом.');
+    if (!priority || priority > 99) fail(400, 'Приоритет должен быть от 1 до 99.');
+    if (!driverId || !vehicleId || input.trailerId && !trailerId) fail(400, 'Выберите водителя, автомобиль и корректный прицеп.');
+    return { routeId, date, priority, driverId, vehicleId, trailerId,
+      driverLabel: entry('driver', driverId), vehicleLabel: entry('vehicle', vehicleId),
+      trailerLabel: trailerId ? entry('trailer', trailerId) : null, note: clean(input.note, 1000) };
+  }
+  function checkBusy(value, excludeId = 0) {
+    const conflict = db.prepare(`SELECT id,driver_id,vehicle_id,trailer_id FROM requests WHERE status='waiting' AND service_date=? AND id<>? AND (driver_id=? OR vehicle_id=? OR (? IS NOT NULL AND trailer_id=?)) LIMIT 1`).get(value.date, excludeId, value.driverId, value.vehicleId, value.trailerId, value.trailerId);
+    if (conflict) {
+      const resource = conflict.driver_id === value.driverId ? 'Водитель' : conflict.vehicle_id === value.vehicleId ? 'Автомобиль' : 'Прицеп';
+      fail(409, `${resource} уже запланирован на эту дату в заявке №${conflict.id}.`);
+    }
+  }
+  function getRequest(id) { return db.prepare('SELECT * FROM requests WHERE id=?').get(id); }
+  function saveRequest(input, actor, id = null) {
+    return transaction(() => {
+      const old = id ? getRequest(id) : null;
+      if (id && !old) fail(404, 'Заявка не найдена.');
+      if (old?.status === 'archived') fail(409, 'Заявка в архиве.');
+      if (old && Number(input.version) !== old.version) fail(409, 'Заявка уже изменена другим логистом. Обновите список.');
+      const v = validateRequest(input, old);
+      if (!old || old.status === 'waiting') checkBusy(v, id || 0);
+      const at = now();
+      if (old) {
+        db.prepare('UPDATE requests SET route_id=?,service_date=?,priority=?,driver_id=?,vehicle_id=?,trailer_id=?,driver_label=?,vehicle_label=?,trailer_label=?,note=?,version=version+1,updated_at=? WHERE id=?').run(v.routeId,v.date,v.priority,v.driverId,v.vehicleId,v.trailerId,v.driverLabel,v.vehicleLabel,v.trailerLabel,v.note,at,id);
+      } else {
+        id = Number(db.prepare("INSERT INTO requests(route_id,service_date,priority,driver_id,vehicle_id,trailer_id,driver_label,vehicle_label,trailer_label,note,status,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,'waiting',?,?,?)").run(v.routeId,v.date,v.priority,v.driverId,v.vehicleId,v.trailerId,v.driverLabel,v.vehicleLabel,v.trailerLabel,v.note,actor.id,at,at).lastInsertRowid);
+      }
+      audit(actor.id, old ? 'request_updated' : 'request_created', id, `Маршрут ${v.routeId}, ${v.date}`);
+      return getRequest(id);
+    });
+  }
+  function changeStatus(id, status, version, actor) {
+    if (!['waiting','paused','archived'].includes(status)) fail(400, 'Некорректный статус.');
+    return transaction(() => {
+      const row = getRequest(id);
+      if (!row) fail(404, 'Заявка не найдена.');
+      if (row.version !== Number(version)) fail(409, 'Заявка уже изменена другим логистом. Обновите список.');
+      if (row.status === 'archived') fail(409, 'Заявка уже в архиве.');
+      if (status === 'waiting') {
+        const v = validateRequest({ routeId: row.route_id, serviceDate: row.service_date, priority: row.priority, driverId: row.driver_id, vehicleId: row.vehicle_id, trailerId: row.trailer_id }, row);
+        checkBusy(v, id);
+      }
+      db.prepare('UPDATE requests SET status=?,version=version+1,updated_at=? WHERE id=?').run(status,now(),id);
+      audit(actor.id, `request_${status}`,id,`Маршрут ${row.route_id}`);
+      return getRequest(id);
+    });
+  }
+  const botStore=createBotStore({db,file,timeZone,audit,transaction,fail});
+  return { ...botStore, db, timeZone, userCount, addUser, login, createSession, session, importDirectory, catalog, saveRequest, changeStatus,
+    logout: token => db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hashSession(token || '')),
+    users: () => db.prepare('SELECT id,username,name,role,created_at FROM users ORDER BY name').all(),
+    requests: () => db.prepare('SELECT r.*,u.name AS created_by_name FROM requests r JOIN users u ON r.created_by=u.id ORDER BY r.service_date,r.priority,r.id').all(),
+    activity: () => db.prepare('SELECT a.*,u.name AS actor FROM audit a LEFT JOIN users u ON a.user_id=u.id ORDER BY a.id DESC LIMIT 200').all(),
+    close: () => db.close(),
+  };
+}

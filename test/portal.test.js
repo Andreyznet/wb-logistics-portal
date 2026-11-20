@@ -99,6 +99,9 @@ test('HTTP authentication, roles, same-origin writes, setup closure and full req
     assert.equal(JSON.stringify(savedBot.value).includes(secret),false);
     assert.equal(JSON.stringify((await call('/api/bot/status')).value).includes(secret),false);
     assert.equal(JSON.stringify((await call('/api/activity')).value).includes(secret),false);
+    store.recordBotLog('poll_completed',{routes:[61373,65522,64197],total:300,targetRecords:9,candidates:0,newEvents:0});
+    for(const endpoint of ['/api/bot/settings','/api/bot/status']){const result=await call(endpoint);assert.equal(result.value.serverVersion,'0.4.1');assert.equal(result.value.logs[0].kind,'poll_completed');assert.equal(result.value.logs[0].payload.total,300);assert.equal(JSON.stringify(result.value).includes(secret),false);}
+
     assert.equal((await call('/api/setup',{}, {extra:{'X-Setup-Token':'test-setup'}})).res.status,409);
     assert.equal((await call('/api/catalog/import',directory)).res.status,200);
     const req=await call('/api/requests',input());assert.equal(req.res.status,201);

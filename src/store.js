@@ -29,7 +29,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
   if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
-    CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, name TEXT NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin','logist')), created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, name TEXT NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('super_admin','admin','logist')), created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), expires_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS catalog(kind TEXT NOT NULL, id INTEGER NOT NULL, label TEXT NOT NULL, payload TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(kind,id));
     CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -37,6 +37,11 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     CREATE INDEX IF NOT EXISTS requests_date_status ON requests(service_date,status);
     CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id), action TEXT NOT NULL, request_id INTEGER, detail TEXT NOT NULL, created_at TEXT NOT NULL);
   `);
+  const userSchema=db.prepare("SELECT sql FROM sqlite_master WHERE name='users'").get().sql;
+  if(!userSchema.includes("'super_admin'")){
+    db.exec("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE;");
+    try{db.exec("CREATE TABLE users_roles(id INTEGER PRIMARY KEY,username TEXT UNIQUE NOT NULL,name TEXT NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('super_admin','admin','logist')),created_at TEXT NOT NULL); INSERT INTO users_roles SELECT * FROM users; UPDATE users_roles SET role='super_admin' WHERE id=(SELECT min(id) FROM users_roles WHERE role='admin'); DROP TABLE users; ALTER TABLE users_roles RENAME TO users; COMMIT;");}catch(e){db.exec('ROLLBACK');throw e;}finally{db.exec('PRAGMA foreign_keys=ON');}
+  }
   const now = () => new Date().toISOString();
   function transaction(fn) {
     db.exec('BEGIN IMMEDIATE');
@@ -55,16 +60,34 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     if (!/^[a-z0-9._-]{3,64}$/.test(username)) fail(400, 'Логин: от 3 до 64 латинских букв, цифр, точек или дефисов.');
     if (!name) fail(400, 'Укажите имя сотрудника.');
     if (typeof password !== 'string' || password.length < 10 || password.length > 200) fail(400, 'Пароль должен содержать от 10 до 200 символов.');
-    if (!setup && actor?.role !== 'admin') fail(403, 'Действие доступно администратору.');
+    if (!setup && !['admin','super_admin'].includes(actor?.role)) fail(403, 'Действие доступно администратору.');
     const hash = passwordHash(password);
     return transaction(() => {
       if (setup && userCount()) fail(409, 'Первоначальная настройка уже выполнена.');
       if (db.prepare('SELECT id FROM users WHERE username=?').get(username)) fail(409, 'Такой логин уже существует.');
-      const role = setup ? 'admin' : 'logist';
+      const role = setup ? 'super_admin' : input.role||'logist';
+      if(!['super_admin','admin','logist'].includes(role))fail(400,'Неизвестная роль.');
+      if(!setup&&role==='super_admin'&&actor.role!=='super_admin')fail(403,'Только суперадмин может назначить суперадмина.');
       const result = db.prepare('INSERT INTO users(username,name,password_hash,role,created_at) VALUES(?,?,?,?,?)').run(username, name, hash, role, now());
       const user = publicUser(db.prepare('SELECT * FROM users WHERE id=?').get(result.lastInsertRowid));
       audit(actor?.id ?? user.id, 'user_created', null, name);
       return user;
+    });
+  }
+  function updateUser(id,input,actor){
+    if(!['super_admin','admin'].includes(actor?.role))fail(403,'Доступно только администратору.');
+    return transaction(()=>{
+      const old=db.prepare('SELECT * FROM users WHERE id=?').get(id);if(!old)fail(404,'Пользователь не найден.');
+      const role=input.role??old.role,name=clean(input.name??old.name,100),username=clean(input.username??old.username,64).toLowerCase();
+      if(!['super_admin','admin','logist'].includes(role))fail(400,'Неизвестная роль.');
+      if(actor.role!=='super_admin'&&(old.role==='super_admin'||role==='super_admin'))fail(403,'Только суперадмин может менять суперадмина.');
+      if(old.role==='super_admin'&&role!=='super_admin'&&db.prepare("SELECT count(*) AS n FROM users WHERE role='super_admin'").get().n<=1)fail(409,'Нельзя понизить последнего суперадмина.');
+      if(!name||!/^[a-z0-9._-]{3,64}$/.test(username))fail(400,'Проверьте имя и логин.');
+      if(db.prepare('SELECT id FROM users WHERE username=? AND id<>?').get(username,id))fail(409,'Такой логин уже существует.');
+      let hash=old.password_hash;if(input.password){if(typeof input.password!=='string'||input.password.length<10||input.password.length>200)fail(400,'Пароль должен содержать от 10 до 200 символов.');hash=passwordHash(input.password);}
+      db.prepare('UPDATE users SET name=?,username=?,role=?,password_hash=? WHERE id=?').run(name,username,role,hash,id);
+      if(hash!==old.password_hash)db.prepare('DELETE FROM sessions WHERE user_id=?').run(id);
+      audit(actor.id,'user_updated',null,name+'; роль: '+role);return publicUser(db.prepare('SELECT * FROM users WHERE id=?').get(id));
     });
   }
   // Use a real password hash for unknown usernames as well, to avoid an obvious timing distinction.
@@ -185,7 +208,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     });
   }
   const botStore=createBotStore({db,file,timeZone,audit,transaction,fail});
-  return { ...botStore, db, timeZone, userCount, addUser, login, createSession, session, importDirectory, catalog, saveRequest, changeStatus,
+  return { ...botStore, db, timeZone, userCount, addUser, updateUser, login, createSession, session, importDirectory, catalog, saveRequest, changeStatus,
     logout: token => db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hashSession(token || '')),
     users: () => db.prepare('SELECT id,username,name,role,created_at FROM users ORDER BY name').all(),
     requests: () => db.prepare('SELECT r.*,u.name AS created_by_name FROM requests r JOIN users u ON r.created_by=u.id ORDER BY r.service_date,r.priority,r.id').all(),

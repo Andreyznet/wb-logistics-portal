@@ -43,13 +43,14 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
       write('bot_token',secret);
       write('bot_config',{revision:current.revision+1,enabled:input.enabled,intervalSeconds:input.intervalSeconds,scheduleEnabled:false,days:input.days,startTime:input.startTime,endTime:input.endTime,updatedAt:new Date().toISOString()});
       audit(actor.id,'bot_settings_updated',null,`Бот ${input.enabled?'включён':'выключен'}; опрос ${input.intervalSeconds} сек.; расписание ${input.scheduleEnabled?'включено':'выключено'}${supplied?'; токен заменён':input.clearToken?'; токен удалён':''}`);
+      setBotRuntime(input.enabled?{state:'starting',nextPollAt:null,error:null}:{state:'stopped',nextPollAt:null,error:null});
       return getBotSettings(actor);
     });
   }
   function botConfig(){return {...read('bot_config',defaults()),token:decrypt(read('bot_token',null)),timeZone};}
   function stopBot(reason){const config=read('bot_config',defaults());if(config.enabled){write('bot_config',{...config,enabled:false,revision:config.revision+1,updatedAt:new Date().toISOString()});audit(null,'bot_stopped',null,reason);}}
   function setBotRuntime(runtime){const old=read('bot_runtime',{});const value={...old,...runtime};if(JSON.stringify(old)!==JSON.stringify(value))write('bot_runtime',value);return value;}
-  function getBotStatus(actor){requireAdmin(actor);return {serverVersion:'0.5.0',runtime:read('bot_runtime',{state:'stopped'}),logs:db.prepare('SELECT * FROM bot_logs ORDER BY id DESC LIMIT 100').all().map(row=>({...row,payload:JSON.parse(row.payload)})),events:db.prepare('SELECT id,kind,payload,created_at FROM bot_events ORDER BY id DESC LIMIT 30').all().map(row=>({...row,payload:JSON.parse(row.payload)}))};}
+  function getBotStatus(actor){requireAdmin(actor);return {serverVersion:'0.5.1',runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},logs:db.prepare('SELECT * FROM bot_logs ORDER BY id DESC LIMIT 100').all().map(row=>({...row,payload:JSON.parse(row.payload)})),events:db.prepare('SELECT id,kind,payload,created_at FROM bot_events ORDER BY id DESC LIMIT 30').all().map(row=>({...row,payload:JSON.parse(row.payload)}))};}
   function recordBotCandidates(candidates){return transaction(()=>{
     const old=new Map(db.prepare('SELECT * FROM bot_observations').all().map(row=>[row.id,row]));
     db.exec('UPDATE bot_observations SET active=0');

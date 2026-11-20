@@ -86,7 +86,7 @@ test('HTTP authentication, roles, same-origin writes, setup closure and full req
     assert.equal((await call('/api/requests')).res.status,401);
     assert.equal((await call('/api/bot/settings')).res.status,401);
     assert.equal((await call('/')).res.status,200);
-    assert.equal((await call('/app.js')).res.status,200);
+    assert.equal((await call('/app.js')).res.status,200);const design=await call('/design.css');assert.equal(design.res.status,200);assert.match(design.res.headers.get('content-type'),/text\/css/);
     assert.equal((await call('/api/setup',{username:'admin',name:'Admin',password:'testing-password-123'})).res.status,403);
     const created=await call('/api/setup',{username:'admin',name:'Admin',password:'testing-password-123'},{extra:{'X-Setup-Token':'test-setup'}});
     assert.equal(created.res.status,201);session=created.res.headers.get('set-cookie').split(';')[0];
@@ -101,7 +101,7 @@ test('HTTP authentication, roles, same-origin writes, setup closure and full req
     assert.equal(JSON.stringify((await call('/api/activity')).value).includes(secret),false);
     for(const asset of ['/vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css']){const result=await fetch(origin+asset);assert.equal(result.status,200);}
     store.recordBotLog('poll_completed',{routes:[61373,65522,64197],total:300,targetRecords:9,candidates:0,newEvents:0});
-    for(const endpoint of ['/api/bot/settings','/api/bot/status']){const result=await call(endpoint);assert.equal(result.value.serverVersion,'0.10.4');assert.equal(result.value.logs[0].kind,'poll_completed');assert.equal(result.value.logs[0].payload.total,300);assert.equal(JSON.stringify(result.value).includes(secret),false);}
+    for(const endpoint of ['/api/bot/settings','/api/bot/status']){const result=await call(endpoint);assert.equal(result.value.serverVersion,'0.11.0');assert.equal(result.value.logs[0].kind,'poll_completed');assert.equal(result.value.logs[0].payload.total,300);assert.equal(JSON.stringify(result.value).includes(secret),false);}
 
     assert.equal((await call('/api/setup',{}, {extra:{'X-Setup-Token':'test-setup'}})).res.status,409);
     assert.equal((await call('/api/catalog/import',directory)).res.status,200);

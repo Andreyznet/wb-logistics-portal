@@ -33,7 +33,7 @@ function planStatusLabel(plan,enabled=state.botPublic?.enabled??state.bot?.setti
  if((plan.service_date||plan.date)>today)return 'Ожидает даты';return enabled?'Мониторинг':'Ожидает запуска';
 }
 const dateLabel=value=>{if(!value)return '—';const[y,m,d]=value.slice(0,10).split('-');return `${d}.${m}.${y}`;};
-const timeLabel=value=>value?new Intl.DateTimeFormat('ru-RU',{timeZone:state.session?.timeZone||'Asia/Yekaterinburg',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(value)):'—';
+const timeLabel=(value,withSeconds=false)=>value?new Intl.DateTimeFormat('ru-RU',{timeZone:state.session?.timeZone||'Asia/Yekaterinburg',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',...(withSeconds?{second:'2-digit'}:{})}).format(new Date(value)):'—';
 const initials=name=>String(name||'').split(/\s+/).filter(Boolean).slice(0,2).map(s=>s[0]).join('').toUpperCase();
 let toastTimer, catalogCollection, catalogSearchTimer;
 function toast(message,type='info'){const box=document.querySelector('#toast');box.replaceChildren();box.classList.toggle('toast-error',type==='error');box.setAttribute('role',type==='error'?'alert':'status');box.setAttribute('aria-live',type==='error'?'assertive':'polite');const text=document.createElement('span');text.textContent=message;box.append(text);if(type==='error'){const close=document.createElement('button');close.type='button';close.className='toast-close';close.textContent='×';close.setAttribute('aria-label','Закрыть уведомление');close.onclick=()=>box.classList.remove('show');box.append(close);}box.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>box.classList.remove('show'),type==='error'?12000:4200);}
@@ -48,7 +48,7 @@ async function api(path,{method='GET',data,headers={},signal}={}){
   return result;
 }
 async function boot(){
-  try{state.session=await api('/api/session');state.user=state.session.user;if(state.session.serverVersion!=='0.15.3')throw new Error('Версии страницы и сервера различаются. Обновите папку src и перезапустите сервер портала.');if(!state.user)return renderAuth();await load();render();}
+  try{state.session=await api('/api/session');state.user=state.session.user;if(state.session.serverVersion!=='0.15.4')throw new Error('Версии страницы и сервера различаются. Обновите папку src и перезапустите сервер портала.');if(!state.user)return renderAuth();await load();render();}
   catch(error){app.innerHTML=`<main class="boot-error-screen"><section class="boot-error-card" aria-labelledby="boot-error-title"><div class="boot-error-icon" aria-hidden="true">${icon('info')}</div><h1 id="boot-error-title">Не удалось загрузить кабинет</h1><p>${esc(error.message)}</p><div class="boot-error-actions"><button class="primary" id="retry">Повторить</button><button class="secondary" id="error-logout">Выйти из аккаунта</button></div></section></main>`;document.querySelector('#retry').onclick=boot;document.querySelector('#error-logout').onclick=async()=>{try{await api('/api/logout',{method:'POST',data:{}});state.user=null;state.view='dashboard';state.bot=null;await boot();}catch(e){toast(e.message,'error');}};}
 }
 async function load(){

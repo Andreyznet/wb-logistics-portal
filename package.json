@@ -1,7 +1,7 @@
 {
   "name": "wb-logistics-portal",
   "private": true,
-  "version": "0.15.3",
+  "version": "0.15.4",
   "type": "module",
   "scripts": {
     "dev": "node --env-file-if-exists=.env src/dev.js",

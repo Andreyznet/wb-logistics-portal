@@ -4,6 +4,7 @@ export function dashboard(store,user){
  const alerts=[];
  if(ready.length&&!c.enabled)alerts.push({tone:'warning',title:'Бот остановлен',text:'Готовы к мониторингу: '+ready.length+'.'+(admin?' Включите бота, чтобы начать проверку.':' Обратитесь к менеджеру для запуска.')});
  if(c.enabled&&['auth_error','error'].includes(runtime.state))alerts.push({tone:'error',title:'Мониторинг требует внимания',text:admin?(runtime.error||'Проверьте настройки бота.'):'Менеджер проверяет работу мониторинга.'});
+ if(runtime.warning)alerts.push({tone:'warning',title:'Часть карточек недоступна',text:admin?runtime.warning:'Мониторинг продолжается; часть карточек WB недоступна для проверки.'});
  const settings=admin?store.getBotSettings(user):null;
  if(admin&&!settings.hasToken)alerts.push({tone:'warning',title:'Нужен токен WB',text:'Сохраните токен в настройках бота.'});
  if(admin&&settings.tokenExpiresAt&&Date.parse(settings.tokenExpiresAt)<=Date.now())alerts.push({tone:'error',title:'Срок токена истёк',text:'Замените токен перед запуском мониторинга.'});

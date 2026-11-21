@@ -189,3 +189,15 @@ test('aggression accepts 1–60 checks per minute, stores fractional intervals a
 test('legacy interval can always be stopped without changing running settings',()=>{
  const {store,admin}=init();try{config(store,admin,{enabled:true});const value=store.botConfig();delete value.token;delete value.requestsPerMinute;value.intervalSeconds=17;store.db.prepare("UPDATE settings SET value=? WHERE key='bot_config'").run(JSON.stringify(value));const stopped=store.saveBotSettings({...store.getBotSettings(admin),enabled:false,token:''},admin);assert.equal(stopped.enabled,false);assert.equal(stopped.intervalSeconds,17);}finally{store.close();}
 });
+
+test('one forbidden detail does not stop list monitoring or authorize acceptance; retries are cooled down',async()=>{
+ const {store,admin}=init();let now=new Date(),blockedCalls=0;const base={route_id:61373,supplier_id:null,car_dt:businessDate()+'T12:00:00+05:00'};
+ try{addPlan(store,admin);config(store,admin,{enabled:true});const worker=new BotWorker(store,{clock:()=>now,fetchImpl:async(url,options)=>{assert.equal(options.method,'GET');if(url.endsWith('TO_DELIVERY'))return Response.json({data:[{...base,transport_request_id:100},{...base,transport_request_id:101}]});if(url.endsWith('/100')){blockedCalls++;return Response.json({error:{message:'Forbidden '+testToken}},{status:403});}return Response.json({data:{...base,transport_request_id:101,request_status:'created',is_closed:false}});}});
+ await worker.tick();let status=store.getBotStatus(admin);assert.equal(store.botConfig().enabled,true);assert.equal(status.runtime.candidates,1);assert.equal(status.runtime.deniedCards,1);assert.match(status.runtime.warning,/мониторинг остальных/);assert.equal(status.events[0].payload.id,101);assert.equal(status.events.some(e=>e.payload.id===100),false);const denied=status.logs.find(e=>e.kind==='card_access_denied');assert.equal(denied.payload.httpStatus,403);assert.equal(JSON.stringify(status).includes(testToken),false);
+ now=new Date(now.getTime()+61000);await worker.tick();assert.equal(blockedCalls,1);now=new Date(now.getTime()+300000);await worker.tick();assert.equal(blockedCalls,2);
+ }finally{store.close();}
+});
+test('forbidden list and unauthorized detail still stop monitoring with specific explanations',async()=>{
+ for(const code of [401,403]){const {store,admin}=init();try{addPlan(store,admin);config(store,admin,{enabled:true});const worker=new BotWorker(store,{fetchImpl:async()=>Response.json({error:{message:'Access denied'}},{status:code})});await worker.tick();assert.equal(store.botConfig().enabled,false);assert.match(store.getBotStatus(admin).runtime.error,new RegExp('HTTP '+code));}finally{store.close();}}
+ const {store,admin}=init();try{addPlan(store,admin);config(store,admin,{enabled:true});const worker=new BotWorker(store,{fetchImpl:async url=>url.endsWith('TO_DELIVERY')?Response.json({data:[{transport_request_id:100,route_id:61373,supplier_id:null}]}):Response.json({error:{message:'Unauthorized'}},{status:401})});await worker.tick();assert.equal(store.botConfig().enabled,false);assert.match(store.getBotStatus(admin).runtime.error,/401/);}finally{store.close();}
+});

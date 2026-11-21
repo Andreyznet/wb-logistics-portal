@@ -4,7 +4,8 @@ export class LiveAcceptance {
  confirmed(card,id,e){return card?.transport_request_id===id&&card.route_id===e.routeId&&card.supplier_id===e.supplierId&&card.driver_id===e.driverId&&card.vehicle_id===e.vehicleId;}
  async reconcile(token,signal){
   for(const attempt of this.store.pendingAcceptances()){
-   const result=await this.worker.get(`${API}/${attempt.id}`,token,signal),card=result?.data,e=attempt.expected;
+   if((this.worker.deniedCards?.get(attempt.id)||0)>this.worker.clock().getTime())continue;
+   let result;try{result=await this.worker.get(`${API}/${attempt.id}`,token,signal);}catch(error){if(!error.cardDenied)throw error;this.worker.deniedCards?.set(attempt.id,this.worker.clock().getTime()+300000);this.store.recordBotLog('card_access_denied',{id:attempt.id,httpStatus:403,message:error.message+' Результат прежнего принятия остаётся неизвестным; повторный PUT не отправлен.'});continue;}const card=result?.data,e=attempt.expected;
    if(this.confirmed(card,attempt.id,e))this.store.finishAcceptance(attempt.id,e,200,result,'success',this.worker.clock().getTime());
    else if(card?.transport_request_id===attempt.id&&card.supplier_id!=null)this.store.finishAcceptance(attempt.id,e,409,{error:{message:'Карточка назначена другому перевозчику или экипажу.'},data:card},'rejected',this.worker.clock().getTime());
    // An unassigned card alone is not proof that an interrupted PUT never took effect.

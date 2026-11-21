@@ -16,7 +16,7 @@ export function previewCurl(id,plan){
   return `curl.exe --request PUT "${API}/${id}/take-by-supplier" --header "Authorization: Bearer $env:WB_TOKEN" --header "Content-Type: application/json" --data-raw '${body}'`;
 }
 export class BotWorker {
-  constructor(store,{fetchImpl=fetch,clock=()=>new Date()}={}){this.version='0.13.0';this.store=store;this.fetchImpl=fetchImpl;this.clock=clock;this.busy=false;this.controller=null;this.timer=null;this.revision=null;this.nextAt=0;this.lastAttempt=0;this.generation=0;this.failures=0;this.live=new LiveAcceptance(store,this);}
+  constructor(store,{fetchImpl=fetch,clock=()=>new Date()}={}){this.version='0.13.1';this.store=store;this.fetchImpl=fetchImpl;this.clock=clock;this.busy=false;this.controller=null;this.timer=null;this.revision=null;this.nextAt=0;this.lastAttempt=0;this.generation=0;this.failures=0;this.live=new LiveAcceptance(store,this);this.deniedCards=new Map();}
   start(){this.store.recordBotLog('worker_started',{workerVersion:this.version,message:'Процесс мониторинга запущен. Запросы WB выполняются при включённом боте и активных планах.'});this.store.setBotRuntime({state:'stopped',nextPollAt:null,workerVersion:this.version});const run=()=>this.tick().catch(()=>this.store.setBotRuntime({state:'error',error:'Ошибка процесса мониторинга.'}));this.timer=setInterval(run,1000);this.timer.unref();void run();}
   stop(){clearInterval(this.timer);this.generation++;this.controller?.abort();}
   changed(){this.generation++;this.controller?.abort();this.revision=null;}
@@ -29,7 +29,12 @@ export class BotWorker {
   async read(url,token,signal,requestId){
     let response;try{response=await this.fetchImpl(url,{method:'GET',redirect:'manual',signal:AbortSignal.any([signal,AbortSignal.timeout(20000)]),headers:{Accept:'application/json',Authorization:`Bearer ${token}`}});}catch(error){if(signal.aborted)throw error;throw new PollError('Сетевая ошибка или тайм-аут WB.');}
     this.store.recordBotLog('response_received',{requestId,method:'GET',url,httpStatus:response.status});
-    if([401,403].includes(response.status))throw new PollError('WB отказал в доступе. Проверьте токен перед повторным включением.',{stop:true});
+    if([401,403].includes(response.status)){
+      let detail='';try{const body=await response.json();detail=String(body?.error?.message||body?.message||'').replaceAll(token,'[скрыто]').replace(/eyJ[A-Za-z0-9_.-]+/g,'[скрыто]').slice(0,500);}catch{}
+      const cardId=/\/transport-requests\/(\d+)$/.exec(new URL(url).pathname)?.[1];
+      if(response.status===403&&cardId)throw new PollError('WB запретил чтение карточки '+cardId+' (HTTP 403).'+(detail?' '+detail:''),{cardDenied:true,httpStatus:403,id:Number(cardId)});
+      throw new PollError(response.status===401?'WB отклонил авторизацию (HTTP 401). Проверьте токен.':'WB запретил доступ к списку заявок (HTTP 403). Проверьте права аккаунта и токен.'+(detail?' '+detail:''),{stop:true,httpStatus:response.status});
+    }
     if(response.status===429){const retry=response.headers.get('retry-after');const delay=retry&&/^\d+$/.test(retry)?Number(retry)*1000:Math.max(0,Date.parse(retry)-this.clock().getTime())||60000;throw new PollError('WB ограничил частоту запросов. Опрос отложен.',{delay:Math.max(60000,delay)});}
     if(response.status>=300&&response.status<400)throw new PollError('WB перенаправил запрос. Требуется проверка авторизации.',{stop:true});
     if(!response.ok){let explanation='';try{const body=await response.json();explanation=String(body?.error?.message||body?.message||'').replaceAll(token,'[скрыто]').slice(0,1000);}catch{}throw new PollError(`Ошибка WB: HTTP ${response.status}. ${explanation}`.trim());}
@@ -38,8 +43,9 @@ export class BotWorker {
   }
   async tick(){
     const config=this.store.botConfig(),now=this.clock();
+    if(this.accessToken!==config.token){this.deniedCards.clear();this.accessToken=config.token;}
     if(this.revision!==config.revision){this.generation++;this.controller?.abort();this.revision=config.revision;}
-    if(!config.enabled){this.controller?.abort();this.store.setBotRuntime({state:'stopped',nextPollAt:null});return;}
+    if(!config.enabled){this.controller?.abort();this.store.setBotRuntime({state:'stopped',nextPollAt:null,warning:null});return;}
     if(false){this.controller?.abort();this.store.setBotRuntime({state:'outside_schedule',nextPollAt:null});return;}
     const today=localParts(now,config.timeZone).date;
     const plans=this.store.requests().filter(row=>row.status==='waiting'&&row.service_date<=today);
@@ -63,9 +69,11 @@ export class BotWorker {
       if(new Set(payload.data.map(r=>r.transport_request_id)).size!==payload.data.length)throw new PollError('Повторные ID в списке WB.');
       const routes=new Set(plans.map(p=>p.route_id));
       const matches=row=>routes.has(row.route_id);
-      const targets=payload.data.filter(row=>matches(row));const candidates=[];
+      const targets=payload.data.filter(row=>matches(row));const candidates=[];let denied=0;
+      for(const [id,until]of this.deniedCards)if(until<=now.getTime())this.deniedCards.delete(id);
       for(const row of targets){if(controller.signal.aborted||generation!==this.generation)return;if(row.supplier_id!==null)continue;
-        const result=await this.get(`${API}/${row.transport_request_id}`,config.token,controller.signal);const card=result?.data;
+        if(this.deniedCards.has(row.transport_request_id)){denied++;continue;}
+        let result;try{result=await this.get(`${API}/${row.transport_request_id}`,config.token,controller.signal);}catch(error){if(!error.cardDenied)throw error;denied++;if(this.deniedCards.size>=1000)this.deniedCards.delete(this.deniedCards.keys().next().value);this.deniedCards.set(row.transport_request_id,this.clock().getTime()+300000);this.store.recordBotLog('card_access_denied',{id:row.transport_request_id,routeId:row.route_id,httpStatus:403,message:error.message+' Карточка пропущена; повторная проверка через 5 минут. Бот продолжает работу.'});continue;}const card=result?.data;
         if(!card||card.transport_request_id!==row.transport_request_id||card.route_id!==row.route_id||!Object.hasOwn(card,'supplier_id')||typeof card.request_status!=='string'||typeof card.is_closed!=='boolean'||!card.car_dt||!Number.isFinite(Date.parse(card.car_dt)))throw new PollError('Неожиданная структура карточки WB.');
         if(matches(card)&&card.request_status==='created'&&card.is_closed===false&&card.supplier_id===null)candidates.push({id:card.transport_request_id,routeId:card.route_id,carDt:card.car_dt,cubature:card.cubature_value??null,pricePerKm:card.price_per_km??null,distanceKm:card.distance_km??null});
       }
@@ -78,8 +86,8 @@ export class BotWorker {
       }
       const events=this.store.recordBotCandidates(candidates,{source:`${API}?filter=TO_DELIVERY`,method:'GET',receivedAt:listReceivedAt,candidateIds:candidates.map(c=>c.id),response:payload});
       if(config.acceptanceEnabled)for(const candidate of candidates){if(controller.signal.aborted||generation!==this.generation)break;await this.live.take(candidate,config.token,controller.signal,today);}
-      this.store.recordBotLog('poll_completed',{routes:[...new Set(plans.map(p=>p.route_id))],total:payload.data.length,targetRecords:targets.length,candidates:candidates.length,newEvents:events});this.failures=0;this.nextAt=this.clock().getTime()+config.intervalSeconds*1000;
-      this.store.setBotRuntime({state:'waiting',lastSuccessAt:this.clock().toISOString(),nextPollAt:new Date(this.nextAt).toISOString(),total:payload.data.length,targetRecords:targets.length,candidates:candidates.length,newEvents:events,monitoredRoutes:new Set(plans.map(p=>p.route_id)).size,error:null});
+      this.store.recordBotLog('poll_completed',{routes:[...new Set(plans.map(p=>p.route_id))],total:payload.data.length,targetRecords:targets.length,candidates:candidates.length,newEvents:events,deniedCards:denied});this.failures=0;this.nextAt=this.clock().getTime()+config.intervalSeconds*1000;
+      this.store.setBotRuntime({state:'waiting',lastSuccessAt:this.clock().toISOString(),nextPollAt:new Date(this.nextAt).toISOString(),total:payload.data.length,targetRecords:targets.length,candidates:candidates.length,newEvents:events,monitoredRoutes:new Set(plans.map(p=>p.route_id)).size,deniedCards:denied,warning:denied?'Нет доступа к карточкам: '+denied+'. Они пропущены; мониторинг остальных продолжается.':null,error:null});
     }catch(error){if(controller.signal.aborted||generation!==this.generation)return;
       this.store.recordBotLog('poll_failed',{message:error instanceof PollError?error.message:'Ошибка обработки ответа WB.'});
       if(error.stop){this.store.stopBot(error.message);this.store.setBotRuntime({state:'auth_error',error:error.message,nextPollAt:null});}

@@ -2203,8 +2203,10 @@ dialog::backdrop {
  .dashboard{min-height:0;gap:12px;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:none;align-content:start}
  .dashboard>.dashboard-stats,.dashboard>.dashboard-grid,.dashboard>.dashboard-updated{grid-column:1/-1}
  .dashboard>.dashboard-panel{grid-column:1/-1;max-height:140px}
- .dashboard>.dashboard-grid:nth-child(2){height:244px}
- .dashboard>.dashboard-grid:last-of-type{height:204px}
+ .dashboard>.dashboard-grid:nth-child(2){height:auto;min-height:260px}
+ .dashboard>.dashboard-grid:last-of-type{height:auto;min-height:220px}
+ .dashboard>.dashboard-grid:last-of-type .dashboard-list{max-height:172px}
+ .dashboard-panel:has(#dashboard-monitor)>.dashboard-body, .dashboard>.dashboard-grid:last-of-type .dashboard-body{flex:none;overflow:visible;scrollbar-gutter:auto}
  .dashboard:has(>.dashboard-panel:nth-of-type(2))>.dashboard-panel{grid-column:auto}
  .dashboard-grid{min-height:0;gap:12px}
  .dashboard-panel{display:flex;flex-direction:column;min-height:0;overflow:hidden}
@@ -2228,3 +2230,8 @@ dialog::backdrop {
  .dashboard-recent{padding:9px 18px;gap:4px 12px}
  .dashboard-updated{margin:0;font-size:11px;line-height:18px}
 }
+
+.dashboard-recent{color:var(--ink);text-decoration:none;text-align:left}
+.dashboard-recent:hover{background:var(--surface-subtle)}
+.dashboard-recent:hover strong{color:var(--accent-text);text-decoration:underline}
+.dashboard-recent:focus-visible{outline:2px solid var(--accent);outline-offset:-3px}

@@ -48,7 +48,7 @@ async function api(path,{method='GET',data,headers={},signal}={}){
   return result;
 }
 async function boot(){
-  try{state.session=await api('/api/session');state.user=state.session.user;if(state.session.serverVersion!=='0.15.2')throw new Error('Версии страницы и сервера различаются. Обновите папку src и перезапустите сервер портала.');if(!state.user)return renderAuth();await load();render();}
+  try{state.session=await api('/api/session');state.user=state.session.user;if(state.session.serverVersion!=='0.15.3')throw new Error('Версии страницы и сервера различаются. Обновите папку src и перезапустите сервер портала.');if(!state.user)return renderAuth();await load();render();}
   catch(error){app.innerHTML=`<main class="boot-error-screen"><section class="boot-error-card" aria-labelledby="boot-error-title"><div class="boot-error-icon" aria-hidden="true">${icon('info')}</div><h1 id="boot-error-title">Не удалось загрузить кабинет</h1><p>${esc(error.message)}</p><div class="boot-error-actions"><button class="primary" id="retry">Повторить</button><button class="secondary" id="error-logout">Выйти из аккаунта</button></div></section></main>`;document.querySelector('#retry').onclick=boot;document.querySelector('#error-logout').onclick=async()=>{try{await api('/api/logout',{method:'POST',data:{}});state.user=null;state.view='dashboard';state.bot=null;await boot();}catch(e){toast(e.message,'error');}};}
 }
 async function load(){

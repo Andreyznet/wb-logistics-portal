@@ -145,7 +145,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     const vehicleIds = new Set(rows.filter(r => r.kind === 'vehicle').map(r => r.id));
     if (rows.some(r => r.kind === 'trailer' && vehicleIds.has(r.id))) fail(400, 'Один ID указан одновременно для автомобиля и прицепа.');
     return transaction(() => {
-      db.exec('UPDATE catalog SET active=0');
+      db.exec("UPDATE catalog SET active=0 WHERE kind IN ('driver','vehicle','trailer')");
       const insert = db.prepare('INSERT INTO catalog(kind,id,label,payload,active) VALUES(?,?,?,?,1) ON CONFLICT(kind,id) DO UPDATE SET label=excluded.label,payload=excluded.payload,active=1');
       for (const row of rows) insert.run(row.kind, row.id, row.label, row.payload);
       db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('directory_imported_at', now());
@@ -157,14 +157,14 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
   const normalizeSearch=value=>String(value||'').toLocaleLowerCase('ru').replaceAll('ё','е');
   if(!db.prepare('PRAGMA table_info(catalog)').all().some(c=>c.name==='search_text')){db.exec("ALTER TABLE catalog ADD COLUMN search_text TEXT NOT NULL DEFAULT ''");for(const row of db.prepare('SELECT kind,id,label FROM catalog').all())db.prepare('UPDATE catalog SET search_text=? WHERE kind=? AND id=?').run(normalizeSearch(row.id+' '+row.label),row.kind,row.id);}
   function cacheCatalogRows(kind,rows,{replace=false}={}){
-    if(!['driver','vehicle','trailer'].includes(kind)||!Array.isArray(rows))fail(400,'Некорректный справочник.');
-    const prepared=rows.map(row=>{const id=integer(row.id);if(!id)fail(502,'WB вернул некорректный ID.');const name=clean(row.name,180),plate=clean(row.number_plate,40),label=kind==='driver'?name||'Водитель ID '+id:plate?(plate+(name&&name!==plate?' · '+name:'')):name||'ТС ID '+id;return {id,label,data:{id,name,number_plate:plate},search:normalizeSearch(id+' '+label)};});
+    if(!['route','driver','vehicle','trailer'].includes(kind)||!Array.isArray(rows))fail(400,'Некорректный справочник.');
+    const prepared=rows.map(row=>{const id=integer(row.id);if(!id)fail(502,'WB вернул некорректный ID.');const name=clean(row.name,kind==='route'?500:180),plate=clean(row.number_plate,40),label=kind==='route'?name:kind==='driver'?name||'Водитель ID '+id:plate?(plate+(name&&name!==plate?' · '+name:'')):name||'ТС ID '+id;return {id,label,data:{id,name,number_plate:plate},search:normalizeSearch(id+' '+label)};});
     transaction(()=>{if(replace)db.prepare('UPDATE catalog SET active=0 WHERE kind=?').run(kind);for(const row of prepared)db.prepare('INSERT INTO catalog(kind,id,label,payload,active,search_text) VALUES(?,?,?,?,1,?) ON CONFLICT(kind,id) DO UPDATE SET label=excluded.label,payload=excluded.payload,active=1,search_text=excluded.search_text').run(kind,row.id,row.label,JSON.stringify(row.data),row.search);});
     return prepared.map(row=>({...row.data,label:row.label}));
   }
-  function catalogSummary(){const counts={drivers:0,vehicles:0,trailers:0},map={driver:'drivers',vehicle:'vehicles',trailer:'trailers'};for(const row of db.prepare('SELECT kind,count(*) AS n FROM catalog WHERE active=1 GROUP BY kind').all())counts[map[row.kind]]=row.n;return {drivers:[],vehicles:[],trailers:[],counts,importedAt:db.prepare("SELECT value FROM settings WHERE key='directory_imported_at'").get()?.value??null};}
+  function catalogSummary(){const counts={drivers:0,vehicles:0,trailers:0},map={driver:'drivers',vehicle:'vehicles',trailer:'trailers'};for(const row of db.prepare('SELECT kind,count(*) AS n FROM catalog WHERE active=1 GROUP BY kind').all()){if(map[row.kind])counts[map[row.kind]]=row.n;};return {drivers:[],vehicles:[],trailers:[],counts,importedAt:db.prepare("SELECT value FROM settings WHERE key='directory_imported_at'").get()?.value??null};}
   function catalogPage(kind,query='',offset=0,limit=30){
-    if(!['driver','vehicle','trailer'].includes(kind)||!Number.isSafeInteger(offset)||offset<0)fail(400,'Некорректная страница справочника.');
+    if(!['route','driver','vehicle','trailer'].includes(kind)||!Number.isSafeInteger(offset)||offset<0)fail(400,'Некорректная страница справочника.');
     const pattern='%'+normalizeSearch(query).replaceAll('!','!!').replaceAll('%','!%').replaceAll('_','!_')+'%';
     const rows=db.prepare("SELECT * FROM catalog WHERE active=1 AND kind=? AND search_text LIKE ? ESCAPE '!' ORDER BY label COLLATE NOCASE,id LIMIT ? OFFSET ?").all(kind,pattern,limit+1,offset);return {data:rows.slice(0,limit).map(row=>({...JSON.parse(row.payload),label:row.label})),hasMore:rows.length>limit};
   }
@@ -172,7 +172,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     const result = { drivers: [], vehicles: [], trailers: [], importedAt: db.prepare("SELECT value FROM settings WHERE key='directory_imported_at'").get()?.value ?? null };
     const names = { driver: 'drivers', vehicle: 'vehicles', trailer: 'trailers' };
     for (const row of db.prepare('SELECT * FROM catalog WHERE active=1 ORDER BY label COLLATE NOCASE').all()) {
-      result[names[row.kind]].push({ ...JSON.parse(row.payload), label: row.label });
+      if(names[row.kind])result[names[row.kind]].push({ ...JSON.parse(row.payload), label: row.label });
     }
     return result;
   }

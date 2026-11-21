@@ -48,3 +48,38 @@ test('WB failure retains saved drivers and transport with explicit warning and p
  for(const kind of ['driver','vehicle','trailer']){const first=await pager.page({kind});assert.equal(first.source,'saved');assert.match(first.warning,/HTTP 401/);assert.equal(first.data.length,30);const second=await pager.page({kind,cursor:first.nextCursor});assert.equal(second.data.length,5);assert.equal(second.nextCursor,null);assert.match(second.warning,/сохранённый/);}
  }finally{store.close();}
 });
+
+
+test('route lookup uses verified WB payload, signed pagination, coalescing and isolated cache',async()=>{
+ const {store}=setup(),calls=[];
+ try{
+  const pager=createCatalogPager(store,{fetchImpl:async(url,options)=>{
+   calls.push({url,options,body:JSON.parse(options.body)});
+   const second=JSON.parse(options.body).meta.page_token==='65522';
+   return reply({data:{routecars:[{routecar_id:second?'65523':'65522',routecar_name:'Новосибирск — Абакан',supplier_ids:['secret']} ]},meta:{has_next:!second,page_token:second?'65523':'65522'}});
+  }});
+  assert.equal((await pager.page({kind:'route'})).data.length,0);assert.equal(calls.length,0);
+  const [first,same]=await Promise.all([pager.page({kind:'route',query:'6552'}),pager.page({kind:'route',query:'6552'})]);
+  assert.equal(calls.length,1);assert.deepEqual(first,same);
+  assert.equal(calls[0].url,'https://logistics.wb.ru/router-bff/routecar/v1/routecars');
+  assert.equal(calls[0].options.method,'POST');assert.equal(calls[0].options.headers.Authorization,'Bearer test-token-value');
+  assert.deepEqual(calls[0].body,{data:{query:'6552',delivery_types:['DELIVERY_TYPE_MGT']},meta:{page_size:400,page_token:''}});
+  assert.equal(first.data[0].id,65522);assert.equal(first.data[0].label,'Новосибирск — Абакан');assert.equal(JSON.stringify(first).includes('secret'),false);
+  const second=await pager.page({kind:'route',query:'6552',cursor:first.nextCursor});assert.equal(calls[1].body.meta.page_token,'65522');assert.equal(second.data[0].id,65523);assert.equal(second.nextCursor,null);
+  await assert.rejects(()=>pager.page({kind:'route',query:'65522',cursor:first.nextCursor}),/устарела/);
+  await assert.rejects(()=>pager.page({kind:'route',query:'abc'}),/цифрами/);
+  assert.deepEqual(Object.keys(store.catalogSummary().counts).sort(),['drivers','trailers','vehicles']);assert.equal(store.catalog().drivers.length,0);
+  const fallback=createCatalogPager(store,{fetchImpl:async()=>new Response('',{status:401})});const cached=await fallback.page({kind:'route',query:'65522'});assert.equal(cached.source,'saved');assert.match(cached.warning,/401/);assert.equal(cached.data[0].id,65522);
+ }finally{store.close();}
+});
+
+test('route parser rejects invalid IDs, duplicates and missing continuation tokens',async()=>{
+ const {parseRoutecarPage}=await import('../src/directory-api.js');
+ const row={routecar_id:'65522',routecar_name:'Маршрут'};
+ for(const payload of [
+  {data:{routecars:[{...row,routecar_id:'1e3'}]},meta:{has_next:false}},
+  {data:{routecars:[row,row]},meta:{has_next:false}},
+  {data:{routecars:[row]},meta:{has_next:true,page_token:''}},
+  {data:{routecars:[]},meta:{has_next:true,page_token:'next'}}
+ ])assert.throws(()=>parseRoutecarPage(payload));
+});

@@ -69,6 +69,7 @@ export function makeDirectoryApi({ logisticsHeaders, driveHeaders }, fetchImpl =
   }
   return {
     transport: () => request(TRANSPORT_URL, logisticsHeaders),
+    routecars: body => request(ROUTECARS_URL, logisticsHeaders, body),
     partnerships: body => request(PARTNERSHIPS_URL, driveHeaders, body),
   };
 }
@@ -120,3 +121,20 @@ export function buildDirectory(transport, partnerships, info = {}) {
   };
 }
 
+
+export const ROUTECARS_URL='https://logistics.wb.ru/router-bff/routecar/v1/routecars';
+export function routecarBody(query,token=''){
+ return {data:{query,delivery_types:['DELIVERY_TYPE_MGT']},meta:{page_size:400,page_token:token}};
+}
+export function parseRoutecarPage(payload){
+ const rows=payload?.data?.routecars,meta=payload?.meta;
+ if(payload?.success===false||payload?.error||!Array.isArray(rows)||rows.length>400||typeof meta?.has_next!=='boolean')throw new Error('Invalid routecars response');
+ const ids=new Set();const normalized=rows.map(row=>{
+  if(!/^[1-9]\d*$/.test(String(row?.routecar_id)))throw new Error('Invalid route ID');
+  const id=Number(row.routecar_id),name=row.routecar_name;
+  if(!Number.isSafeInteger(id)||id>2147483647||ids.has(id)||typeof name!=='string'||!name.trim()||name.length>500)throw new Error('Invalid route record');
+  ids.add(id);return {id,name:name.trim()};
+ });
+ if(meta.has_next&&(!rows.length||typeof meta.page_token!=='string'||!meta.page_token||meta.page_token.length>2000))throw new Error('Invalid route cursor');
+ return {rows:normalized,nextToken:meta.has_next?meta.page_token:null};
+}

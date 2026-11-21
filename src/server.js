@@ -1,3 +1,4 @@
+import {dashboard} from './dashboard.js';
 import { makeDirectoryApi, parseTransport, collectPartnerships, buildDirectory } from './directory-api.js';
 import { createCatalogPager } from './catalog-pager.js';
 import { createServer } from 'node:http';
@@ -48,7 +49,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       if (req.method === 'POST' && req.headers.origin !== origin) fail(403,'Недопустимый источник запроса.');
       const user = store.session(token);
       if (url.pathname === '/api/session' && req.method === 'GET') return json(200, {
-        serverVersion:'0.12.4',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
+        serverVersion:'0.13.0',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
         today: businessDate(store.timeZone), timeZone: store.timeZone,
         ...(demoMode ? { demoMode: true } : {}),
       });
@@ -119,6 +120,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
           return json(200,{settings:store.getBotSettings(user),...store.getBotStatus(user)});
         }
         if (url.pathname === '/api/logout' && req.method === 'POST') { store.logout(token); return json(200,{ok:true},{'Set-Cookie':cookie('')}); }
+        if(url.pathname==='/api/dashboard'&&req.method==='GET')return json(200,dashboard(store,user));
         if(url.pathname==='/api/catalog/summary'&&req.method==='GET')return json(200,store.catalogSummary());
         if(url.pathname==='/api/catalog/page'&&req.method==='GET')return json(200,await catalogPager.page({kind:url.searchParams.get('kind'),query:url.searchParams.get('query')||'',cursor:url.searchParams.get('cursor')||null}));
         if (url.pathname === '/api/catalog' && req.method === 'GET') return json(200,store.catalog());
@@ -138,7 +140,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         fail(404,'Раздел не найден или недостаточно прав.');
       }
       if (req.method !== 'GET') fail(404,'Страница не найдена.');
-      const files = { '/':'index.html','/paged-list.js':'paged-list.js','/app.js':'app.js','/styles.css':'styles.css','/design.css':'design.css','/vendor/tabulator/tabulator.min.js':'vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css':'vendor/tabulator/tabulator.min.css','/favicon.svg':'favicon.svg' };
+      const files = { '/':'index.html','/paged-list.js':'paged-list.js','/overview.js':'overview.js','/app.js':'app.js','/styles.css':'styles.css','/design.css':'design.css','/vendor/tabulator/tabulator.min.js':'vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css':'vendor/tabulator/tabulator.min.css','/favicon.svg':'favicon.svg' };
       const preset=/^\/avatars\/(cat|frog|robot|bear|owl)\.svg$/.test(url.pathname);
       const file = preset?url.pathname.slice(1):files[url.pathname];
       if (!file) fail(404,'Страница не найдена.');

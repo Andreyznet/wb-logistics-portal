@@ -238,11 +238,21 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
       return getRequest(id);
     });
   }
+  db.exec('CREATE TABLE IF NOT EXISTS request_watchers(request_id INTEGER NOT NULL REFERENCES requests(id),user_id INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,PRIMARY KEY(request_id,user_id))');
+  function watchRequest(id,enabled,actor){
+    if(!actor?.id)fail(401,'Войдите в аккаунт.');if(!Number.isSafeInteger(id)||id<1||typeof enabled!=='boolean')fail(400,'Некорректная подписка.');
+    return transaction(()=>{const plan=db.prepare('SELECT * FROM requests WHERE id=?').get(id);if(!plan)fail(404,'Заявка не найдена.');
+      if(plan.created_by===actor.id)fail(400,'Автор уже получает уведомления по своей заявке.');
+      if(enabled&&(plan.status==='archived'||db.prepare("SELECT id FROM acceptance_attempts WHERE plan_id=? AND state='success'").get(id)))fail(409,'Можно подписаться только на ещё не принятую активную заявку.');
+      if(enabled)db.prepare('INSERT OR IGNORE INTO request_watchers VALUES(?,?,?)').run(id,actor.id,now());else db.prepare('DELETE FROM request_watchers WHERE request_id=? AND user_id=?').run(id,actor.id);
+      return {watching:enabled};
+    });
+  }
   const botStore=createBotStore({db,file,timeZone,audit,transaction,fail});
-  return { ...botStore, db, timeZone, userCount, addUser, updateUser, saveAvatar, getAvatar, login, createSession, session, importDirectory, catalog, catalogSummary, catalogPage, cacheCatalogRows, saveRequest, changeStatus,
+  return { ...botStore, db, timeZone, userCount, addUser, updateUser, saveAvatar, getAvatar, login, createSession, session, importDirectory, catalog, catalogSummary, catalogPage, cacheCatalogRows, saveRequest, changeStatus, watchRequest,
     logout: token => db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hashSession(token || '')),
     users: () => db.prepare('SELECT id,username,name,role,created_at FROM users ORDER BY name').all().map(user=>({...user,avatar:avatarUrl(user.id)})),
-    requests: () => db.prepare("SELECT r.*,u.name AS created_by_name,(SELECT a.id FROM acceptance_attempts a WHERE a.plan_id=r.id AND a.state='success' ORDER BY a.updated_at DESC LIMIT 1) AS accepted_wb_id FROM requests r JOIN users u ON r.created_by=u.id ORDER BY r.service_date,r.priority,r.id").all(),
+    requests: (actor=null) => db.prepare("SELECT r.*,u.name AS created_by_name,EXISTS(SELECT 1 FROM request_watchers w WHERE w.request_id=r.id AND w.user_id=?) AS watching,(SELECT a.id FROM acceptance_attempts a WHERE a.plan_id=r.id AND a.state='success' ORDER BY a.updated_at DESC LIMIT 1) AS accepted_wb_id FROM requests r JOIN users u ON r.created_by=u.id ORDER BY r.service_date,r.priority,r.id").all(actor?.id||0),
     activity: () => db.prepare('SELECT a.*,u.name AS actor FROM audit a LEFT JOIN users u ON a.user_id=u.id ORDER BY a.id DESC LIMIT 200').all(),
     close: () => db.close(),
   };

@@ -16,7 +16,7 @@ export function previewCurl(id,plan){
   return `curl.exe --request PUT "${API}/${id}/take-by-supplier" --header "Authorization: Bearer $env:WB_TOKEN" --header "Content-Type: application/json" --data-raw '${body}'`;
 }
 export class BotWorker {
-  constructor(store,{fetchImpl=fetch,clock=()=>new Date()}={}){this.version='0.13.2';this.store=store;this.fetchImpl=fetchImpl;this.clock=clock;this.busy=false;this.controller=null;this.timer=null;this.revision=null;this.nextAt=0;this.lastAttempt=0;this.generation=0;this.failures=0;this.live=new LiveAcceptance(store,this);this.deniedCards=new Map();}
+  constructor(store,{fetchImpl=fetch,clock=()=>new Date()}={}){this.version='0.14.0';this.store=store;this.fetchImpl=fetchImpl;this.clock=clock;this.busy=false;this.controller=null;this.timer=null;this.revision=null;this.nextAt=0;this.lastAttempt=0;this.generation=0;this.failures=0;this.live=new LiveAcceptance(store,this);this.deniedCards=new Map();}
   start(){this.store.recordBotLog('worker_started',{workerVersion:this.version,message:'Процесс мониторинга запущен. Запросы WB выполняются при включённом боте и активных планах.'});this.store.setBotRuntime({state:'stopped',nextPollAt:null,workerVersion:this.version});const run=()=>this.tick().catch(()=>this.store.setBotRuntime({state:'error',error:'Ошибка процесса мониторинга.'}));this.timer=setInterval(run,1000);this.timer.unref();void run();}
   stop(){clearInterval(this.timer);this.generation++;this.controller?.abort();}
   changed(){this.generation++;this.controller?.abort();this.revision=null;}

@@ -49,7 +49,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       if (req.method === 'POST' && req.headers.origin !== origin) fail(403,'Недопустимый источник запроса.');
       const user = store.session(token);
       if (url.pathname === '/api/session' && req.method === 'GET') return json(200, {
-        serverVersion:'0.13.2',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
+        serverVersion:'0.14.0',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
         today: businessDate(store.timeZone), timeZone: store.timeZone,
         ...(demoMode ? { demoMode: true } : {}),
       });
@@ -124,8 +124,10 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         if(url.pathname==='/api/catalog/summary'&&req.method==='GET')return json(200,store.catalogSummary());
         if(url.pathname==='/api/catalog/page'&&req.method==='GET')return json(200,await catalogPager.page({kind:url.searchParams.get('kind'),query:url.searchParams.get('query')||'',cursor:url.searchParams.get('cursor')||null}));
         if (url.pathname === '/api/catalog' && req.method === 'GET') return json(200,store.catalog());
-        if (url.pathname === '/api/requests' && req.method === 'GET') return json(200,{data:store.requests()});
+        if (url.pathname === '/api/requests' && req.method === 'GET') return json(200,{data:store.requests(user)});
         if (url.pathname === '/api/requests' && req.method === 'POST') return json(201,{data:store.saveRequest(await body(req),user)});
+        const watchMatch=/^\/api\/requests\/(\d+)\/watch$/.exec(url.pathname);
+        if(watchMatch&&req.method==='POST'){const input=await body(req);return json(200,store.watchRequest(Number(watchMatch[1]),input.enabled,user));}
         const match = /^\/api\/requests\/(\d+)(\/status)?$/.exec(url.pathname);
         if (match && req.method === 'POST') {
           const input = await body(req);

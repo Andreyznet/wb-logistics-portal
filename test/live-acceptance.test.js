@@ -14,7 +14,7 @@ const row=id=>({transport_request_id:id,route_id:61373,supplier_id:null,car_dt:b
 const assigned=id=>({...row(id),supplier_id:10,driver_id:1,vehicle_id:2,request_status:null});
 test('live success sends captured payload once, pauses plan and notifies owner; second card cannot reuse crew',async()=>{
  const {store,admin}=setup();let puts=0;const worker=new BotWorker(store,{fetchImpl:async(url,options)=>{assert.equal(options.redirect,'manual');if(options.method==='PUT'){puts++;assert.deepEqual(JSON.parse(options.body),{vehicle:2,driver:1,freelancerID:null,accept_round_trip:false});return Response.json({data:assigned(Number(url.split('/').at(-2)))});}return Response.json({data:url.endsWith('TO_DELIVERY')?[row(100),row(101)]:row(Number(url.split('/').pop()))});}});
- try{await worker.tick();assert.equal(puts,1);assert.equal(store.requests()[0].status,'paused');assert.equal(store.userAlerts(admin).length,1);assert.equal(store.getBotStatus(admin).outcomes[0].kind,'acceptance_success');await worker.tick();assert.equal(puts,1);}finally{store.close();}
+ try{await worker.tick();assert.equal(puts,1);assert.equal(store.requests()[0].status,'paused');assert.equal(store.requests()[0].accepted_wb_id,100);assert.equal(store.userAlerts(admin).length,1);assert.equal(store.getBotStatus(admin).outcomes[0].kind,'acceptance_success');await worker.tick();assert.equal(puts,1);}finally{store.close();}
 });
 test('definitive conflict retries after cooldown without requiring a new detection, at most three PUTs',async()=>{
  const {store,admin}=setup();let puts=0,now=new Date();const worker=new BotWorker(store,{clock:()=>now,fetchImpl:async(url,options)=>{if(options.method==='PUT'){puts++;return Response.json({success:false,error:{message:'Выбранный маршрут нельзя взять в работу.'}},{status:409});}return Response.json({data:url.endsWith('TO_DELIVERY')?[row(100)]:row(100)});}});
@@ -45,4 +45,8 @@ test('429 on PUT respects retry delay and prevents other acceptance in the same 
 
 test('admin may delete discovery for replay without clearing pending acceptance protection',()=>{
  const {store,admin}=setup();try{store.recordBotCandidates([{id:100,routeId:61373,planId:store.requests()[0].id}]);const event=store.getBotStatus(admin).events[0];assert.throws(()=>store.deleteBotEvent(event.id,{id:admin.id,role:'admin'}));assert.throws(()=>store.deleteBotEvent(event.id,{id:admin.id,role:'logist'}));store.claimAcceptance(100,store.requests()[0],Date.now());store.deleteBotEvent(event.id,admin);assert.equal(store.getBotStatus(admin).events.length,0);assert.equal(store.pendingAcceptances().length,1);assert.equal(store.recordBotCandidates([{id:100,routeId:61373,planId:store.requests()[0].id}]),1);assert.equal(store.claimAcceptance(100,store.requests()[0],Date.now()),null);}finally{store.close();}
+});
+
+test('success result, owner alert and plan pause roll back together on a storage failure',()=>{
+ const {store,admin}=setup();try{const plan=store.requests()[0],expected=store.claimAcceptance(777,plan,Date.now());store.db.exec("CREATE TRIGGER reject_pause BEFORE UPDATE OF status ON requests BEGIN SELECT RAISE(ABORT, 'test storage failure'); END;");assert.throws(()=>store.finishAcceptance(777,expected,200,{data:assigned(777)},'success',Date.now()),/test storage failure/);assert.equal(store.requests()[0].status,'waiting');assert.equal(store.requests()[0].accepted_wb_id,null);assert.equal(store.getBotStatus(admin).outcomes.length,0);assert.equal(store.userAlerts(admin).length,0);assert.equal(store.pendingAcceptances().length,1);}finally{store.close();}
 });

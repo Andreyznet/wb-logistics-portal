@@ -13,14 +13,15 @@ export function createAcceptanceStore({db,transaction,botConfig,recordAcceptance
  });}
  function finish(id,expected,httpStatus,response,state,now,retryDelay=60000){
   // The durable pending intent continues to reserve the crew until result and plan updates are persisted.
-  const result=recordAcceptanceResult({id,routeId:expected.routeId,httpStatus,response,expected});
+  return transaction(()=>{
+  const result=recordAcceptanceResult({id,routeId:expected.routeId,httpStatus,response,expected,inTransaction:true});
   const finalState=result.kind==='acceptance_success'?'success':state;
-  transaction(()=>{db.prepare('UPDATE acceptance_attempts SET state=?,updated_at=?,retry_at=?,response=? WHERE id=?').run(finalState,now,now+retryDelay,JSON.stringify({httpStatus,response}),id);
+  db.prepare('UPDATE acceptance_attempts SET state=?,updated_at=?,retry_at=?,response=? WHERE id=?').run(finalState,now,now+retryDelay,JSON.stringify({httpStatus,response}),id);
    if(finalState==='success'){
     db.prepare("UPDATE requests SET status='paused',version=version+1,updated_at=? WHERE status='waiting' AND (id=? OR driver_id=? OR vehicle_id=?)").run(new Date(now).toISOString(),expected.planId,expected.driverId,expected.vehicleId);
     audit(null,'request_accepted',expected.planId,'Заявка WB №'+id+' принята; планы этого экипажа приостановлены.');
    }
-  });return finalState;
+  return finalState;});
  }
  function getAttempt(id,actor){if(actor?.role!=='super_admin')fail(403,'Ответ принятия доступен администратору.');const row=db.prepare('SELECT * FROM acceptance_attempts WHERE id=?').get(id);if(!row)fail(404,'Попытка не найдена.');return {...row,expected:JSON.parse(row.expected),response:row.response?JSON.parse(row.response):null};}
  return {pendingAcceptances:pending,claimAcceptance:claim,finishAcceptance:finish,getAcceptanceAttempt:getAttempt};

@@ -1,6 +1,6 @@
 {
   "name": "Маршрут — кабинет логиста",
-  "description": "Портал планирования перевозок, управления экипажами и мониторинга заявок Wildberries Logistics.",
+  "description": "Портал планирования перевозок, управления экипажами и контроля заявок.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -208,6 +208,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     return transaction(() => {
       const old = id ? getRequest(id) : null;
       if (id && !old) fail(404, 'Заявка не найдена.');
+      if (old && db.prepare("SELECT id FROM acceptance_attempts WHERE plan_id=? AND state='success'").get(id)) fail(409, 'Обработанную заявку нельзя редактировать.');
       if (old?.status === 'archived') fail(409, 'Заявка в архиве.');
       if (old && Number(input.version) !== old.version) fail(409, 'Заявка уже изменена другим логистом. Обновите список.');
       const v = validateRequest(input, old);
@@ -229,6 +230,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
       if (!row) fail(404, 'Заявка не найдена.');
       if (row.version !== Number(version)) fail(409, 'Заявка уже изменена другим логистом. Обновите список.');
       if (row.status === 'archived') fail(409, 'Заявка уже в архиве.');
+      if (status !== 'archived' && db.prepare("SELECT id FROM acceptance_attempts WHERE plan_id=? AND state='success'").get(id)) fail(409, 'Обработанную заявку можно только перенести в архив.');
       if (status === 'waiting') {
         const v = validateRequest({ routeId: row.route_id, serviceDate: row.service_date, priority: row.priority, driverId: row.driver_id, vehicleId: row.vehicle_id, trailerId: row.trailer_id }, row);
         checkBusy(v, id);

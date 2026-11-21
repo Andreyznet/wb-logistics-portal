@@ -14,7 +14,13 @@ const row=id=>({transport_request_id:id,route_id:61373,supplier_id:null,car_dt:b
 const assigned=id=>({...row(id),supplier_id:10,driver_id:1,vehicle_id:2,request_status:null});
 test('live success sends captured payload once, pauses plan and notifies owner; second card cannot reuse crew',async()=>{
  const {store,admin}=setup();let puts=0;const worker=new BotWorker(store,{fetchImpl:async(url,options)=>{assert.equal(options.redirect,'manual');if(options.method==='PUT'){puts++;assert.deepEqual(JSON.parse(options.body),{vehicle:2,driver:1,freelancerID:null,accept_round_trip:false});return Response.json({data:assigned(Number(url.split('/').at(-2)))});}return Response.json({data:url.endsWith('TO_DELIVERY')?[row(100),row(101)]:row(Number(url.split('/').pop()))});}});
- try{await worker.tick();assert.equal(puts,1);assert.equal(store.requests()[0].status,'paused');assert.equal(store.requests()[0].accepted_wb_id,100);assert.equal(store.userAlerts(admin).length,1);assert.equal(store.getBotStatus(admin).outcomes[0].kind,'acceptance_success');await worker.tick();assert.equal(puts,1);}finally{store.close();}
+ try{await worker.tick();assert.equal(puts,1);assert.equal(store.requests()[0].status,'paused');assert.equal(store.requests()[0].accepted_wb_id,100);assert.equal(store.userAlerts(admin).length,1);assert.equal(store.getBotStatus(admin).outcomes[0].kind,'acceptance_success');await worker.tick();assert.equal(puts,1);
+ const processed=store.requests()[0],before=store.requests().find(r=>r.id===processed.id);
+ assert.throws(()=>store.saveRequest({routeId:65522,serviceDate:processed.service_date,driverId:1,vehicleId:2,priority:1,version:processed.version},admin,processed.id),/Обработанную заявку нельзя редактировать/);
+ assert.deepEqual(store.requests().find(r=>r.id===processed.id),before);
+ assert.throws(()=>store.changeStatus(processed.id,'waiting',processed.version,admin),/только перенести в архив/);
+ store.changeStatus(processed.id,'archived',processed.version,admin);assert.equal(store.requests().find(r=>r.id===processed.id).status,'archived');
+ }finally{store.close();}
 });
 test('definitive conflict retries after cooldown without requiring a new detection, at most three PUTs',async()=>{
  const {store,admin}=setup();let puts=0,now=new Date();const worker=new BotWorker(store,{clock:()=>now,fetchImpl:async(url,options)=>{if(options.method==='PUT'){puts++;return Response.json({success:false,error:{message:'Выбранный маршрут нельзя взять в работу.'}},{status:409});}return Response.json({data:url.endsWith('TO_DELIVERY')?[row(100)]:row(100)});}});

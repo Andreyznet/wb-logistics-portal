@@ -1,18 +1,51 @@
 <!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f68338"><title>Маршрут — кабинет логиста</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/vendor/tabulator/tabulator.min.css"><link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/design.css">
-  <script src="/vendor/tabulator/tabulator.min.js" defer></script><script src="/paged-list.js" defer></script><script src="/app.js" defer></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c111d">
+  <title>Маршрут — кабинет логиста</title>
+  <meta name="description" content="Портал планирования перевозок, управления экипажами и мониторинга заявок Wildberries Logistics.">
+  <meta property="og:title" content="Маршрут — кабинет логиста">
+  <meta property="og:description" content="Портал планирования перевозок, управления экипажами и мониторинга заявок Wildberries Logistics.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/vendor/tabulator/tabulator.min.css">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/design.css">
+  <script src="/vendor/tabulator/tabulator.min.js" defer></script>
+  <script src="/paged-list.js" defer></script>
+  <script src="/app.js" defer></script>
 </head>
 <body>
-  <div id="app"><div class="loading">Загружаем кабинет…</div></div>
+  <div id="app">
+    <div class="loading">
+      <div class="loading-mark" aria-hidden="true"></div>
+      <span>Загружаем кабинет…</span>
+    </div>
+  </div>
   <div id="toast" role="status" aria-live="polite"></div>
   <dialog id="request-dialog" aria-labelledby="dialog-title"></dialog>
   <dialog id="user-dialog" aria-labelledby="user-dialog-title"></dialog>
-<dialog id="curl-log-dialog"><h2>Команда cURL</h2><p>Просмотр команды не отправляет запрос. Фактический результат смотрите в колонке «Результат принятия». Вместо токена — переменная WB_TOKEN.</p><pre></pre><form method="dialog"><button class="secondary">Закрыть</button></form></dialog>
-<dialog id="avatar-dialog" aria-labelledby="avatar-title"></dialog>
-<dialog id="acceptance-alert-dialog" aria-labelledby="acceptance-alert-title"></dialog>
+  <dialog id="curl-log-dialog" aria-labelledby="curl-dialog-title">
+    <div class="dialog-head">
+      <div>
+        <h2 id="curl-dialog-title">Команда cURL</h2>
+        <p>Просмотр команды не отправляет запрос. Фактический результат смотрите в колонке «Результат принятия». Вместо токена — переменная WB_TOKEN.</p>
+      </div>
+      <form method="dialog"><button class="close" aria-label="Закрыть"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></form>
+    </div>
+    <div class="curl-body">
+      <pre></pre>
+      <form method="dialog" class="dialog-buttons">
+        <button class="secondary">Закрыть</button>
+      </form>
+    </div>
+  </dialog>
+  <dialog id="avatar-dialog" aria-labelledby="avatar-title"></dialog>
+  <dialog id="acceptance-alert-dialog" aria-labelledby="acceptance-alert-title"></dialog>
 </body>
 </html>

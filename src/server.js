@@ -32,12 +32,13 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
     const isSecure = trustProxy && req.headers['x-forwarded-proto'] === 'https';
     const origin = `${isSecure ? 'https' : 'http'}://${req.headers.host}`;
     const token = /(?:^|;\s*)portal_session=([^;]+)/.exec(req.headers.cookie || '')?.[1];
+    const framePolicy = process.env.DEMO_SEED === '1' ? '' : " frame-ancestors 'none';";
     const headers = {
       'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'same-origin',
-      'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+      'Content-Security-Policy':`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self';${framePolicy} base-uri 'none'; form-action 'self'`,
     };
     const json = (status, data, extra = {}) => { res.writeHead(status, {...headers,'Content-Type':'application/json; charset=utf-8',...extra}); res.end(JSON.stringify(data)); };
-    const cookie = value => `portal_session=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${value ? 86400 : 0}${isSecure ? '; Secure' : ''}`;
+    const cookie = value => `portal_session=${value}; HttpOnly; SameSite=${isSecure ? 'None; Secure' : 'Lax'}; Path=/; Max-Age=${value ? 86400 : 0}`;
     try {
       if (!['GET','POST'].includes(req.method)) fail(405,'Метод не поддерживается.');
       if (req.method === 'POST' && req.headers.origin !== origin) fail(403,'Недопустимый источник запроса.');
@@ -45,6 +46,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       if (url.pathname === '/api/session' && req.method === 'GET') return json(200, {
         serverVersion:'0.12.0',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
         today: businessDate(store.timeZone), timeZone: store.timeZone,
+        ...(process.env.DEMO_SEED === '1' ? { demoMode: true } : {}),
       });
       if (url.pathname === '/api/setup' && req.method === 'POST') {
         if (store.userCount()) fail(409,'Первоначальная настройка уже выполнена.');
@@ -144,15 +146,84 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
   });
 }
 
+function seedPreviewDemo(store) {
+  if (store.userCount() > 0) return;
+  const admin = store.addUser({ username: 'admin', name: 'Алексей Соколов', password: 'logist2026demo' }, null, true);
+  const manager = store.addUser({ username: 'elena.k', name: 'Елена Кузнецова', password: 'logist2026demo', role: 'admin' }, admin);
+  const logist = store.addUser({ username: 'dmitry.v', name: 'Дмитрий Волков', password: 'logist2026demo', role: 'logist' }, admin);
+  store.saveAvatar({ preset: 'owl' }, admin);
+  store.saveAvatar({ preset: 'cat' }, manager);
+  store.saveAvatar({ preset: 'robot' }, logist);
+
+  store.importDirectory({
+    transport: {
+      drivers: [
+        { id: 481204, name: 'Морозов Сергей Викторович' },
+        { id: 481219, name: 'Громов Андрей Николаевич' },
+        { id: 481245, name: 'Белов Павел Александрович' },
+        { id: 481288, name: 'Тарасов Максим Игоревич' },
+        { id: 481302, name: 'Ковалёв Олег Дмитриевич' },
+        { id: 481340, name: 'Савельев Игорь Сергеевич' },
+        { id: 481377, name: 'Фёдоров Виктор Петрович' },
+      ],
+      vehicles: [
+        { id: 90211, name: 'SITRAK C7H 4x2', number_plate: 'А412КМ196' },
+        { id: 90218, name: 'Volvo FH 460', number_plate: 'Е804УХ196' },
+        { id: 90225, name: 'SCANIA R440', number_plate: 'К195МТ196' },
+        { id: 90239, name: 'KAMAZ-54901 Neo', number_plate: 'М730ОР196' },
+        { id: 90244, name: 'Mercedes-Benz Actros', number_plate: 'Н218АВ196' },
+        { id: 90257, name: 'DAF XF 105.460', number_plate: 'О562СЕ196' },
+      ],
+      trailers: [
+        { id: 70411, name: 'Schmitz Cargobull 92 м³', number_plate: 'АВ481266' },
+        { id: 70419, name: 'Krone Profi Liner', number_plate: 'АЕ903466' },
+        { id: 70426, name: 'Kögel Cargo 86 м³', number_plate: 'АК217566' },
+        { id: 70438, name: 'Wielton Curtain Master', number_plate: 'АМ664066' },
+      ],
+    },
+  }, admin.id);
+
+  const today = businessDate(store.timeZone);
+  const addDays = (iso, days) => {
+    const d = new Date(`${iso}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
+
+  store.saveRequest({ routeId: 61373, serviceDate: today, priority: 1, driverId: 481204, vehicleId: 90211, trailerId: 70411, note: 'Коледино → Екатеринбург, срочная подача' }, admin);
+  store.saveRequest({ routeId: 61373, serviceDate: today, priority: 2, driverId: 481219, vehicleId: 90218, trailerId: 70419, note: 'Резервный экипаж на вечернее окно' }, logist);
+  store.saveRequest({ routeId: 65522, serviceDate: addDays(today, 1), priority: 1, driverId: 481245, vehicleId: 90225, trailerId: 70426, note: 'Казань → Новосибирск, 86 м³' }, manager);
+  const pausedReq = store.saveRequest({ routeId: 64197, serviceDate: addDays(today, 1), priority: 1, driverId: 481288, vehicleId: 90239, trailerId: null, note: 'Ожидаем подтверждение отгрузки на СЦ' }, logist);
+  store.changeStatus(pausedReq.id, 'paused', pausedReq.version, manager);
+  store.saveRequest({ routeId: 66091, serviceDate: addDays(today, 2), priority: 1, driverId: 481302, vehicleId: 90244, trailerId: 70438, note: 'Подольск → Тюмень, без догруза' }, admin);
+  const archivedReq = store.saveRequest({ routeId: 61373, serviceDate: today, priority: 3, driverId: 481340, vehicleId: 90257, trailerId: null, note: 'Рейс выполнен в прошлой смене' }, logist);
+  store.changeStatus(archivedReq.id, 'archived', archivedReq.version, admin);
+
+  store.recordBotLog('poll_started', { routes: [61373, 65522, 66091], intervalSeconds: 30 });
+  store.recordBotLog('response_received', { routeId: 61373, httpStatus: 200, durationMs: 142 });
+  store.recordBotLog('poll_completed', { routes: [61373, 65522, 66091], candidates: 2, newEvents: 1 });
+  store.recordBotCandidates([
+    {
+      id: 8941205,
+      routeId: 61373,
+      carDt: new Date(Date.now() + 6 * 3600000).toISOString(),
+      curl: 'curl --request PUT "https://logistics.wb.ru/transport-requests-service/api/v1/transport-requests/8941205/take-by-supplier" --header "Authorization: Bearer $WB_TOKEN" --header "Content-Type: application/json" --data-raw \'{"vehicle":90211,"driver":481204,"freelancerID":null,"accept_round_trip":false}\'',
+    },
+  ], { response: { data: [{ transport_request_id: 8941205, route_id: 61373, status: 'created' }] } });
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const store = openStore(resolve(process.env.DATABASE_FILE || './data/portal.sqlite'),{timeZone:process.env.PORTAL_TIMEZONE || 'Asia/Yekaterinburg'});
+  if (process.env.DEMO_SEED === '1') {
+    seedPreviewDemo(store);
+  }
   if (process.env.DIRECTORY_FILE && !store.catalog().importedAt) {
     try { const counts = store.importDirectory(JSON.parse((await readFile(process.env.DIRECTORY_FILE,'utf8')).replace(/^\uFEFF/,''))); console.log('Imported directory:',counts); }
     catch { console.error('Could not import DIRECTORY_FILE. Import directory.json in the portal.'); }
   }
   const botWorker=new BotWorker(store);
   const server = createPortal({store,setupToken:process.env.SETUP_TOKEN,trustProxy:process.env.TRUST_PROXY === '1',botWorker});
-  const port = Number(process.env.PORT || 8787), host = process.env.HOST || '127.0.0.1';
+  const port = Number(process.env.PORT || 3000), host = process.env.HOST || '0.0.0.0';
   server.listen(port,host,() => {console.log(`Local: http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);botWorker.start();});
   server.on('error',error => {console.error('Server error:',error.code);store.close();process.exitCode=1;});
   for (const signal of ['SIGINT','SIGTERM']) process.on(signal,() => {botWorker.stop();server.close(() => {store.close();process.exit(0);});});

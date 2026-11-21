@@ -34,3 +34,12 @@ test('live acceptance switch persists immediately and rolls back on save failure
  const context=vm.createContext({state:{user:{role:'super_admin'},view:'bot',bot:{settings:{enabled:true,acceptanceEnabled:false}}},document:{querySelector:s=>s==='#bot-live'?live:s==='#bot-supplier'?supplier:null},esc:String,icon:()=>'',botStateNames:{},renderBotRuntime:()=>{},toast:(message,type)=>notices.push({message,type}),api:async(path,options)=>{if(!options)return{settings:{revision:1,enabled:true,acceptanceEnabled:false,supplierId:0}};posted=options.data;if(fails)throw new Error('save failed');return{settings:{...posted,revision:2},runtime:{state:'waiting'}};}});
  vm.runInContext(block,context);await vm.runInContext('setLiveAcceptance(true)',context);assert.equal(posted.acceptanceEnabled,true);assert.equal(posted.supplierId,10095401);assert.equal(live.disabled,false);assert.equal(live.checked,!fails);assert.equal(context.state.bot.settings.acceptanceEnabled,!fails);assert.match(notices[0].message,fails?/save failed/:/включено и сохранено/);}
 });
+
+test('password-manager autofill cannot replace company ID or saved token without explicit editing',async()=>{
+ const source=await readFile(new URL('../public/app.js',import.meta.url),'utf8');const block=source.slice(source.indexOf('function protectBotCredentials('),source.indexOf('function renderBotSettings('));
+ const fields=new Map();for(const key of ['#bot-token','#bot-supplier','#edit-wb-token','#edit-company-id'])fields.set(key,{value:'',readOnly:true,events:{},addEventListener(event,fn){this.events[event]=fn;},focus(){this.events.focus?.();}});
+ const context=vm.createContext({document:{querySelector:key=>fields.get(key)}});vm.runInContext(block,context);const guard=vm.runInContext('protectBotCredentials({supplierId:10095401})',context);
+ fields.get('#bot-supplier').value='79025981410';fields.get('#bot-token').value='saved-login-password';assert.equal(guard.companyId(),10095401);assert.equal(guard.token(),'');fields.get('#bot-supplier').events.input();assert.equal(fields.get('#bot-supplier').value,10095401);
+ fields.get('#edit-company-id').onclick();fields.get('#bot-supplier').value='12345';assert.equal(guard.companyId(),12345);assert.equal(fields.get('#bot-supplier').readOnly,false);
+ fields.get('#edit-wb-token').onclick();assert.equal(fields.get('#bot-token').value,'');fields.get('#bot-token').value='intentionally-pasted-token';assert.equal(guard.token(),'intentionally-pasted-token');
+});

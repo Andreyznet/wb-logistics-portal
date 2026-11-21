@@ -1,3 +1,4 @@
+import {createBotStore} from '../src/bot-store.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -161,5 +162,15 @@ test('successful assignment alerts only plan owner once and remains until their 
 test('test alerts use same owner inbox without recording acceptance or changing plans',()=>{
  const {store,admin}=init();try{addPlan(store,admin);const plan=store.requests()[0];const logist=store.addUser({username:'tester',name:'Tester',password:'password-12345'},admin);assert.throws(()=>store.createTestAlert(plan.id,logist));
  const before=JSON.stringify(store.requests());store.createTestAlert(plan.id,admin);const alerts=store.userAlerts(admin);assert.equal(alerts.length,1);assert.equal(alerts[0].payload.test,true);assert.equal(alerts[0].payload.planId,plan.id);assert.equal(store.getBotStatus(admin).outcomes.length,0);assert.equal(JSON.stringify(store.requests()),before);store.acknowledgeAlert(alerts[0].id,admin);assert.equal(store.userAlerts(admin).length,0);store.createTestAlert(null,admin);assert.equal(store.userAlerts(admin)[0].payload.test,true);
+ }finally{store.close();}
+});
+
+test('legacy phone in company ID is removed before WB requests and cannot be saved again',()=>{
+ const store=openStore(':memory:');try{const admin=store.addUser({username:'migration',name:'Admin',password:'testing-password-123'},null,true);
+ const bad={...store.getBotSettings(admin),supplierId:79025981410,enabled:true,acceptanceEnabled:true};store.db.prepare("INSERT INTO settings(key,value) VALUES('bot_config',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(bad));
+ // Recreate the bot store against the same database, as on process restart.
+ const migrated=createBotStore({db:store.db,file:':memory:',timeZone:store.timeZone,audit:()=>{},transaction:fn=>fn(),fail:(status,message)=>{throw new Error(message);}});
+ assert.equal(migrated.botConfig().supplierId,0);assert.equal(migrated.botConfig().enabled,false);assert.equal(migrated.botConfig().acceptanceEnabled,false);
+ assert.throws(()=>migrated.saveBotSettings({...migrated.getBotSettings(admin),supplierId:79025981410},admin),/телефона/);
  }finally{store.close();}
 });

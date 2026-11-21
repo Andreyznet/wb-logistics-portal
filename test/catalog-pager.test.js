@@ -21,7 +21,7 @@ test('vehicles and trailers use a shared WB cache and return searched pages of 3
 });
 test('saved directory supports Russian case and ё, literal wildcard search, failed WB requests can retry',async()=>{
  const store=openStore(':memory:');try{store.cacheCatalogRows('driver',[{id:1,name:'Семёнов'},{id:2,name:'100% Имя'}]);const local=createCatalogPager(store);assert.equal((await local.page({kind:'driver',query:'СЕМЕНОВ'})).data[0].id,1);assert.equal((await local.page({kind:'driver',query:'%'})).data.length,1);}finally{store.close();}
- const {store:remote}=setup();let calls=0;try{const pager=createCatalogPager(remote,{fetchImpl:async()=>{if(++calls===1)return new Response('',{status:401});return reply({success:true,data:[],meta:{next_page_token:null}});}});await assert.rejects(()=>pager.page({kind:'driver'}),/Проверьте токен/);assert.equal((await pager.page({kind:'driver'})).data.length,0);assert.equal(calls,2);}finally{remote.close();}
+ const {store:remote}=setup();let calls=0;try{const pager=createCatalogPager(remote,{fetchImpl:async()=>{if(++calls===1)return new Response('',{status:401});return reply({success:true,data:[],meta:{next_page_token:null}});}});await assert.rejects(()=>pager.page({kind:'driver'}),/HTTP 401/);assert.equal((await pager.page({kind:'driver'})).data.length,0);assert.equal(calls,2);}finally{remote.close();}
 });
 function Collection(){const context=vm.createContext({AbortController,Set});vm.runInContext(readFileSync(new URL('../public/paged-list.js',import.meta.url),'utf8')+';globalThis.Collection=PagedCollection;',context);return context.Collection;}
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
@@ -40,4 +40,11 @@ test('paged directory HTTP endpoints are available to all logged-in roles and ne
  const server=createPortal({store,directoryFetch:async()=>reply({success:true,data:[{id:44,name:'Семенов',status:'active'}],meta:{next_page_token:null}})});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin='http://127.0.0.1:'+server.address().port;
  try{assert.equal((await fetch(origin+'/api/catalog/page?kind=driver')).status,401);assert.equal((await fetch(origin+'/paged-list.js')).status,200);for(const user of users){const token=store.createSession(user.id),headers={Cookie:'portal_session='+token};const response=await fetch(origin+'/api/catalog/page?kind=driver&query='+encodeURIComponent('Семенов'),{headers});assert.equal(response.status,200);const value=await response.json();assert.equal(value.data[0].id,44);assert.equal(JSON.stringify(value).includes('test-token-value'),false);const summary=await(await fetch(origin+'/api/catalog/summary',{headers})).json();assert.equal(summary.drivers.length,0);assert.equal(summary.counts.drivers,1);assert.equal((await fetch(origin+'/api/catalog/page?kind=invalid',{headers})).status,400);}}
  finally{await new Promise(resolve=>server.close(resolve));store.close();}
+});
+
+test('WB failure retains saved drivers and transport with explicit warning and pageable fallback',async()=>{
+ const {store}=setup();try{for(const kind of ['driver','vehicle','trailer'])store.cacheCatalogRows(kind,Array.from({length:35},(_,i)=>({id:i+1,name:'Saved '+i})));
+ const pager=createCatalogPager(store,{fetchImpl:async()=>new Response('',{status:401})});
+ for(const kind of ['driver','vehicle','trailer']){const first=await pager.page({kind});assert.equal(first.source,'saved');assert.match(first.warning,/HTTP 401/);assert.equal(first.data.length,30);const second=await pager.page({kind,cursor:first.nextCursor});assert.equal(second.data.length,5);assert.equal(second.nextCursor,null);assert.match(second.warning,/сохранённый/);}
+ }finally{store.close();}
 });

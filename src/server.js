@@ -48,7 +48,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       if (req.method === 'POST' && req.headers.origin !== origin) fail(403,'Недопустимый источник запроса.');
       const user = store.session(token);
       if (url.pathname === '/api/session' && req.method === 'GET') return json(200, {
-        serverVersion:'0.12.3',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
+        serverVersion:'0.12.4',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
         today: businessDate(store.timeZone), timeZone: store.timeZone,
         ...(demoMode ? { demoMode: true } : {}),
       });
@@ -101,7 +101,9 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
           if(!['admin','super_admin'].includes(user.role))fail(403,'Настройки бота доступны менеджеру и администратору.');
           if(req.method==='GET')return json(200,{settings:store.getBotSettings(user),...store.getBotStatus(user)});
           if(req.method==='POST'){
-            const settings=store.saveBotSettings(await body(req),user);
+            const input=await body(req);
+            if(demoMode&&input.enabled)fail(400,'Демо не запускает мониторинг. Остановите сервер и запустите npm run dev или npm start.');
+            const settings=store.saveBotSettings(input,user);
             botWorker?.changed();
             return json(200,{settings,...store.getBotStatus(user)});
           }
@@ -220,6 +222,7 @@ export async function startPortal() {
   const store = openStore(resolve(process.env.DATABASE_FILE || (process.env.DEMO_SEED === '1'?'./data/demo.sqlite':'./data/portal.sqlite')),{timeZone:process.env.PORTAL_TIMEZONE || 'Asia/Yekaterinburg'});
   if (process.env.DEMO_SEED === '1') {
     seedPreviewDemo(store);
+    store.stopBot('Демонстрационный режим: мониторинг отключён.');
   }
   if (process.env.DIRECTORY_FILE && !store.catalog().importedAt) {
     try { const counts = store.importDirectory(JSON.parse((await readFile(process.env.DIRECTORY_FILE,'utf8')).replace(/^\uFEFF/,''))); console.log('Imported directory:',counts); }
@@ -228,7 +231,7 @@ export async function startPortal() {
   const botWorker=new BotWorker(store);
   const server = createPortal({store,setupToken:process.env.SETUP_TOKEN,trustProxy:process.env.TRUST_PROXY === '1',botWorker,demoMode:process.env.DEMO_SEED === '1'});
   const port = Number(process.env.PORT || 3000), host = process.env.HOST || '0.0.0.0';
-  server.listen(port,host,() => {console.log(`Local: http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);if(process.env.DEMO_SEED !== '1')botWorker.start();});
+  server.listen(port,host,() => {console.log(`Local: http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);if(process.env.DEMO_SEED !== '1')botWorker.start();else console.log('DEMO: monitoring disabled. Use npm run dev for the real worker.');});
   server.on('error',error => {console.error('Server error:',error.code);store.close();process.exitCode=1;});
   for (const signal of ['SIGINT','SIGTERM']) process.on(signal,() => {botWorker.stop();server.close(() => {store.close();process.exit(0);});});
   return {server,store,botWorker};

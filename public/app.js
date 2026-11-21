@@ -43,7 +43,7 @@ async function api(path,{method='GET',data,headers={},signal}={}){
   return result;
 }
 async function boot(){
-  try{state.session=await api('/api/session');state.user=state.session.user;if(state.session.serverVersion!=='0.12.3')throw new Error('Версии страницы и сервера различаются. Обновите папку src и перезапустите сервер портала.');if(!state.user)return renderAuth();await load();render();}
+  try{state.session=await api('/api/session');state.user=state.session.user;if(state.session.serverVersion!=='0.12.4')throw new Error('Версии страницы и сервера различаются. Обновите папку src и перезапустите сервер портала.');if(!state.user)return renderAuth();await load();render();}
   catch(error){app.innerHTML=`<main class="boot-error-screen"><section class="boot-error-card" aria-labelledby="boot-error-title"><div class="boot-error-icon" aria-hidden="true">${icon('info')}</div><h1 id="boot-error-title">Не удалось загрузить кабинет</h1><p>${esc(error.message)}</p><div class="boot-error-actions"><button class="primary" id="retry">Повторить</button><button class="secondary" id="error-logout">Выйти из аккаунта</button></div></section></main>`;document.querySelector('#retry').onclick=boot;document.querySelector('#error-logout').onclick=async()=>{try{await api('/api/logout',{method:'POST',data:{}});state.user=null;state.view='requests';state.bot=null;await boot();}catch(e){toast(e.message,'error');}};}
 }
 async function load(){
@@ -175,7 +175,7 @@ function openUser(user=null){
 }
 const botStateNames={starting:'Запускается',stopped:'Выключен',outside_schedule:'Ожидает расписания',no_plans:'Нет запланированных заявок',polling:'Проверяет заявки WB',waiting:'Ожидает следующей проверки',error:'Ошибка проверки',auth_error:'Требуется обновить токен'};
 function monitorTime(value){return value?new Date(value).toLocaleString('ru-RU',{timeZone:state.session.timeZone||'Asia/Yekaterinburg',hour12:false}):'—';}
-const logNames={poll_started:'Начало проверки',request_started:'Запрос отправляется',response_received:'Ответ WB',request_completed:'Запрос завершён',request_failed:'Ошибка запроса',request_cancelled:'Запрос отменён',poll_completed:'Проверка завершена',poll_failed:'Ошибка проверки',snapshot_saved:'Ответ списка сохранён',acceptance_request:'Отправка принятия',acceptance_success:'Взята в работу',acceptance_error:'Ошибка принятия',curl_preview:'cURL — только текст'};
+const logNames={worker_started:'Процесс мониторинга запущен',no_plans:'Нет активных планов',poll_started:'Начало проверки',request_started:'Запрос отправляется',response_received:'Ответ WB',request_completed:'Запрос завершён',request_failed:'Ошибка запроса',request_cancelled:'Запрос отменён',poll_completed:'Проверка завершена',poll_failed:'Ошибка проверки',snapshot_saved:'Ответ списка сохранён',acceptance_request:'Отправка принятия',acceptance_success:'Взята в работу',acceptance_error:'Ошибка принятия',curl_preview:'cURL — только текст'};
 function logSummary(e){const p=e.payload;if(p.message)return p.message;if(e.kind==='poll_started')return 'Маршруты: '+p.routes.join(', ')+' · интервал '+p.intervalSeconds+' сек.';if(e.kind==='poll_completed')return 'Создана: '+p.candidates+' · новых событий: '+p.newEvents;if(p.httpStatus)return 'HTTP '+p.httpStatus;if(p.durationMs!==undefined)return 'Длительность: '+p.durationMs+' мс';return p.message||p.previewNote||(p.snapshotId?'Снимок №'+p.snapshotId+' · заявка '+p.id:p.url)||'';}
 function renderBotRuntime(){
   if(!state.bot||!document.querySelector('#bot-runtime'))return;

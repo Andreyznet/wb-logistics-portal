@@ -16,8 +16,8 @@ export function previewCurl(id,plan){
   return `curl.exe --request PUT "${API}/${id}/take-by-supplier" --header "Authorization: Bearer $env:WB_TOKEN" --header "Content-Type: application/json" --data-raw '${body}'`;
 }
 export class BotWorker {
-  constructor(store,{fetchImpl=fetch,clock=()=>new Date()}={}){this.version='0.12.3';this.store=store;this.fetchImpl=fetchImpl;this.clock=clock;this.busy=false;this.controller=null;this.timer=null;this.revision=null;this.nextAt=0;this.lastAttempt=0;this.generation=0;this.failures=0;this.live=new LiveAcceptance(store,this);}
-  start(){this.store.setBotRuntime({state:'stopped',nextPollAt:null,workerVersion:this.version});const run=()=>this.tick().catch(()=>this.store.setBotRuntime({state:'error',error:'Ошибка процесса мониторинга.'}));this.timer=setInterval(run,1000);this.timer.unref();void run();}
+  constructor(store,{fetchImpl=fetch,clock=()=>new Date()}={}){this.version='0.12.4';this.store=store;this.fetchImpl=fetchImpl;this.clock=clock;this.busy=false;this.controller=null;this.timer=null;this.revision=null;this.nextAt=0;this.lastAttempt=0;this.generation=0;this.failures=0;this.live=new LiveAcceptance(store,this);}
+  start(){this.store.recordBotLog('worker_started',{workerVersion:this.version,message:'Процесс мониторинга запущен. Запросы WB выполняются при включённом боте и активных планах.'});this.store.setBotRuntime({state:'stopped',nextPollAt:null,workerVersion:this.version});const run=()=>this.tick().catch(()=>this.store.setBotRuntime({state:'error',error:'Ошибка процесса мониторинга.'}));this.timer=setInterval(run,1000);this.timer.unref();void run();}
   stop(){clearInterval(this.timer);this.generation++;this.controller?.abort();}
   changed(){this.generation++;this.controller?.abort();this.revision=null;}
   async get(url,token,signal){
@@ -43,7 +43,8 @@ export class BotWorker {
     if(false){this.controller?.abort();this.store.setBotRuntime({state:'outside_schedule',nextPollAt:null});return;}
     const today=localParts(now,config.timeZone).date;
     const plans=this.store.requests().filter(row=>row.status==='waiting'&&row.service_date<=today);
-    if(!plans.length&&!this.store.pendingAcceptances().length){this.controller?.abort();this.store.setBotRuntime({state:'no_plans',nextPollAt:null});return;}
+    if(!plans.length&&!this.store.pendingAcceptances().length){this.controller?.abort();if(this.lastIdleReason!=='no_plans')this.store.recordBotLog('no_plans',{message:'Нет активных планов с наступившей датой начала мониторинга. Запросы WB не отправляются.'});this.lastIdleReason='no_plans';this.store.setBotRuntime({state:'no_plans',nextPollAt:null});return;}
+    this.lastIdleReason=null;
     const exp=(()=>{try{return JSON.parse(Buffer.from(config.token.split('.')[1],'base64url').toString()).exp;}catch{return null;}})();
     if(!config.token||typeof exp==='number'&&exp*1000<=now.getTime()){this.store.stopBot('Токен отсутствует или истёк.');this.store.setBotRuntime({state:'auth_error',error:'Введите действующий токен и включите бота заново.',nextPollAt:null});return;}
     const due=Math.max(this.nextAt,this.lastAttempt+config.intervalSeconds*1000);

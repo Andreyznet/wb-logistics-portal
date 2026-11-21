@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {openStore} from '../src/store.js';
+async function launch(script,folder,expected){const child=spawn(process.execPath,[fileURLToPath(new URL('../src/'+script,import.meta.url))],{cwd:folder,env:{...process.env,HOST:'127.0.0.1',PORT:'0',DATABASE_FILE:join(folder,'portal.sqlite'),DEMO_DATABASE_FILE:join(folder,'legacy.sqlite'),DEMO_SEED:'1'},stdio:['ignore','pipe','pipe']});let output='';try{await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Launcher timeout: '+output)),10000);const read=data=>{output+=data;if(output.includes(expected)){clearTimeout(timer);resolve();}};child.stdout.on('data',read);child.stderr.on('data',read);child.on('error',error=>{clearTimeout(timer);reject(error);});child.on('exit',code=>{clearTimeout(timer);if(!output.includes(expected))reject(new Error('Exit '+code+': '+output));});});return output;}finally{const ended=new Promise(resolve=>child.once('exit',resolve));if(child.exitCode===null){child.kill();await ended;}}}
+test('dev starts real worker despite legacy DEMO_SEED and reuses previous database when working DB is absent',async()=>{const folder=await mkdtemp(join(tmpdir(),'wb-dev-'));try{const store=openStore(join(folder,'legacy.sqlite'));store.addUser({username:'kept',name:'Kept',password:'testing-password-123'},null,true);store.close();const output=await launch('dev.js',folder,'worker_started');assert.match(output,/Using existing database/);assert.doesNotMatch(output,/DEMO: monitoring disabled/);const checked=openStore(join(folder,'legacy.sqlite'));assert.equal(checked.users()[0].username,'kept');checked.close();}finally{await rm(folder,{recursive:true,force:true});}});
+test('explicit demo launcher leaves real worker stopped',async()=>{const folder=await mkdtemp(join(tmpdir(),'wb-demo-'));try{const output=await launch('demo.js',folder,'DEMO: monitoring disabled');assert.doesNotMatch(output,/worker_started/);}finally{await rm(folder,{recursive:true,force:true});}});

@@ -24,29 +24,33 @@ async function body(req) {
   return value;
 }
 
-export function createPortal({ store, setupToken = '', trustProxy = false, botWorker = null, directoryFetch=fetch }) {
+export function createPortal({ store, setupToken = '', trustProxy = false, botWorker = null, directoryFetch=fetch, demoMode=false }) {
   const attempts = new Map();
   const catalogPager=createCatalogPager(store,{fetchImpl:directoryFetch});
   return createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
-    const isSecure = trustProxy && req.headers['x-forwarded-proto'] === 'https';
-    const origin = `${isSecure ? 'https' : 'http'}://${req.headers.host}`;
+    // Dedicated prefix avoids preview-platform authentication routes; old clients remain supported.
+    if(url.pathname.startsWith('/portal-api/'))url.pathname='/api/'+url.pathname.slice('/portal-api/'.length);
+    const forwarded=value=>String(value||'').split(',')[0].trim();
+    const isSecure = trustProxy && forwarded(req.headers['x-forwarded-proto']) === 'https';
+    const publicHost=trustProxy&&req.headers['x-forwarded-host']?forwarded(req.headers['x-forwarded-host']):req.headers.host;
+    const origin = `${isSecure ? 'https' : 'http'}://${publicHost}`;
     const token = /(?:^|;\s*)portal_session=([^;]+)/.exec(req.headers.cookie || '')?.[1];
-    const framePolicy = process.env.DEMO_SEED === '1' ? '' : " frame-ancestors 'none';";
+    const framePolicy = demoMode ? '' : " frame-ancestors 'none';";
     const headers = {
       'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'same-origin',
       'Content-Security-Policy':`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self';${framePolicy} base-uri 'none'; form-action 'self'`,
     };
     const json = (status, data, extra = {}) => { res.writeHead(status, {...headers,'Content-Type':'application/json; charset=utf-8',...extra}); res.end(JSON.stringify(data)); };
-    const cookie = value => `portal_session=${value}; HttpOnly; SameSite=${isSecure ? 'None; Secure' : 'Lax'}; Path=/; Max-Age=${value ? 86400 : 0}`;
+    const cookie = value => `portal_session=${value}; HttpOnly; SameSite=${demoMode&&isSecure ? 'None' : 'Lax'}${isSecure ? '; Secure' : ''}; Path=/; Max-Age=${value ? 86400 : 0}`;
     try {
       if (!['GET','POST'].includes(req.method)) fail(405,'Метод не поддерживается.');
       if (req.method === 'POST' && req.headers.origin !== origin) fail(403,'Недопустимый источник запроса.');
       const user = store.session(token);
       if (url.pathname === '/api/session' && req.method === 'GET') return json(200, {
-        serverVersion:'0.12.0',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
+        serverVersion:'0.12.1',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
         today: businessDate(store.timeZone), timeZone: store.timeZone,
-        ...(process.env.DEMO_SEED === '1' ? { demoMode: true } : {}),
+        ...(demoMode ? { demoMode: true } : {}),
       });
       if (url.pathname === '/api/setup' && req.method === 'POST') {
         if (store.userCount()) fail(409,'Первоначальная настройка уже выполнена.');
@@ -146,7 +150,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
   });
 }
 
-function seedPreviewDemo(store) {
+export function seedPreviewDemo(store) {
   if (store.userCount() > 0) return;
   const admin = store.addUser({ username: 'admin', name: 'Алексей Соколов', password: 'logist2026demo' }, null, true);
   const manager = store.addUser({ username: 'elena.k', name: 'Елена Кузнецова', password: 'logist2026demo', role: 'admin' }, admin);
@@ -212,8 +216,8 @@ function seedPreviewDemo(store) {
   ], { response: { data: [{ transport_request_id: 8941205, route_id: 61373, status: 'created' }] } });
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const store = openStore(resolve(process.env.DATABASE_FILE || './data/portal.sqlite'),{timeZone:process.env.PORTAL_TIMEZONE || 'Asia/Yekaterinburg'});
+export async function startPortal() {
+  const store = openStore(resolve(process.env.DATABASE_FILE || (process.env.DEMO_SEED === '1'?'./data/demo.sqlite':'./data/portal.sqlite')),{timeZone:process.env.PORTAL_TIMEZONE || 'Asia/Yekaterinburg'});
   if (process.env.DEMO_SEED === '1') {
     seedPreviewDemo(store);
   }
@@ -222,10 +226,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     catch { console.error('Could not import DIRECTORY_FILE. Import directory.json in the portal.'); }
   }
   const botWorker=new BotWorker(store);
-  const server = createPortal({store,setupToken:process.env.SETUP_TOKEN,trustProxy:process.env.TRUST_PROXY === '1',botWorker});
+  const server = createPortal({store,setupToken:process.env.SETUP_TOKEN,trustProxy:process.env.TRUST_PROXY === '1',botWorker,demoMode:process.env.DEMO_SEED === '1'});
   const port = Number(process.env.PORT || 3000), host = process.env.HOST || '0.0.0.0';
-  server.listen(port,host,() => {console.log(`Local: http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);botWorker.start();});
+  server.listen(port,host,() => {console.log(`Local: http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);if(process.env.DEMO_SEED !== '1')botWorker.start();});
   server.on('error',error => {console.error('Server error:',error.code);store.close();process.exitCode=1;});
   for (const signal of ['SIGINT','SIGTERM']) process.on(signal,() => {botWorker.stop();server.close(() => {store.close();process.exit(0);});});
+  return {server,store,botWorker};
 }
 
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await startPortal();

@@ -33,13 +33,17 @@ const initials=name=>String(name||'').split(/\s+/).filter(Boolean).slice(0,2).ma
 let toastTimer, catalogCollection, catalogSearchTimer;
 function toast(message,type='info'){const box=document.querySelector('#toast');box.replaceChildren();box.classList.toggle('toast-error',type==='error');box.setAttribute('role',type==='error'?'alert':'status');box.setAttribute('aria-live',type==='error'?'assertive':'polite');const text=document.createElement('span');text.textContent=message;box.append(text);if(type==='error'){const close=document.createElement('button');close.type='button';close.className='toast-close';close.textContent='×';close.setAttribute('aria-label','Закрыть уведомление');close.onclick=()=>box.classList.remove('show');box.append(close);}box.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>box.classList.remove('show'),type==='error'?12000:4200);}
 async function api(path,{method='GET',data,headers={},signal}={}){
-  const response=await fetch(path,{method,signal,credentials:'same-origin',headers:{...(data!==undefined?{'Content-Type':'application/json'}:{}),...headers},...(data!==undefined?{body:JSON.stringify(data)}:{})});
-  const result=await response.json();
+  const endpoint=path.startsWith('/api/')?'/portal-api/'+path.slice(5):path;
+  const response=await fetch(endpoint,{method,signal,credentials:'same-origin',headers:{...(data!==undefined?{'Content-Type':'application/json'}:{}),...headers},...(data!==undefined?{body:JSON.stringify(data)}:{})});
+  const type=response.headers.get('content-type')||'';
+  if(!type.toLowerCase().includes('application/json'))throw new Error('Сервер вернул неверный ответ (HTTP '+response.status+'). Запустите портал через npm run dev для демо или npm start и откройте адрес сервера. Если используется прокси, направьте /portal-api/ на сервер Node.js.');
+  let result;try{result=await response.json();}catch{throw new Error('Сервер вернул повреждённый JSON. Перезапустите портал и повторите вход.');}
+  if(!result||typeof result!=='object'||Array.isArray(result))throw new Error('Сервер вернул некорректные данные. Перезапустите портал.');
   if(!response.ok){if(response.status===401&&state.user){state.user=null;await boot();}throw new Error(result.error||'Не удалось выполнить запрос.');}
   return result;
 }
 async function boot(){
-  try{state.session=await api('/api/session');state.user=state.session.user;if(state.session.serverVersion!=='0.12.0')throw new Error('Версии страницы и сервера различаются. Обновите папку src и перезапустите сервер портала.');if(!state.user)return renderAuth();await load();render();}
+  try{state.session=await api('/api/session');state.user=state.session.user;if(state.session.serverVersion!=='0.12.1')throw new Error('Версии страницы и сервера различаются. Обновите папку src и перезапустите сервер портала.');if(!state.user)return renderAuth();await load();render();}
   catch(error){app.innerHTML=`<main class="boot-error-screen"><section class="boot-error-card" aria-labelledby="boot-error-title"><div class="boot-error-icon" aria-hidden="true">${icon('info')}</div><h1 id="boot-error-title">Не удалось загрузить кабинет</h1><p>${esc(error.message)}</p><div class="boot-error-actions"><button class="primary" id="retry">Повторить</button><button class="secondary" id="error-logout">Выйти из аккаунта</button></div></section></main>`;document.querySelector('#retry').onclick=boot;document.querySelector('#error-logout').onclick=async()=>{try{await api('/api/logout',{method:'POST',data:{}});state.user=null;state.view='requests';state.bot=null;await boot();}catch(e){toast(e.message,'error');}};}
 }
 async function load(){

@@ -1,4 +1,5 @@
 import { makeDirectoryApi, parseTransport, collectPartnerships, buildDirectory } from './directory-api.js';
+import { createCatalogPager } from './catalog-pager.js';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
@@ -23,8 +24,9 @@ async function body(req) {
   return value;
 }
 
-export function createPortal({ store, setupToken = '', trustProxy = false, botWorker = null }) {
+export function createPortal({ store, setupToken = '', trustProxy = false, botWorker = null, directoryFetch=fetch }) {
   const attempts = new Map();
+  const catalogPager=createCatalogPager(store,{fetchImpl:directoryFetch});
   return createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const isSecure = trustProxy && req.headers['x-forwarded-proto'] === 'https';
@@ -41,7 +43,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       if (req.method === 'POST' && req.headers.origin !== origin) fail(403,'Недопустимый источник запроса.');
       const user = store.session(token);
       if (url.pathname === '/api/session' && req.method === 'GET') return json(200, {
-        serverVersion:'0.11.1',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
+        serverVersion:'0.12.0',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
         today: businessDate(store.timeZone), timeZone: store.timeZone,
       });
       if (url.pathname === '/api/setup' && req.method === 'POST') {
@@ -84,9 +86,9 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
           const headers={Authorization:`Bearer ${c.token}`};const api=makeDirectoryApi({logisticsHeaders:headers,driveHeaders:headers});
           try {
             const transport=parseTransport(await api.transport());
-            const partners=await collectPartnerships({requestPage:api.partnerships,supplierId:Number(process.env.SUPPLIER_ID||10095401)});
+            const partners=await collectPartnerships({requestPage:api.partnerships,supplierId:c.supplierId||Number(process.env.SUPPLIER_ID||0)});
             const data=buildDirectory(transport,partners.records);
-            return json(200,store.importDirectory(data,user.id));
+            const result=store.importDirectory(data,user.id);catalogPager.clear();return json(200,result);
           } catch {fail(502,'Не удалось обновить справочник WB. Проверьте токен и повторите позже.');}
         }
         if (url.pathname === '/api/bot/settings') {
@@ -109,6 +111,8 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
           return json(200,{settings:store.getBotSettings(user),...store.getBotStatus(user)});
         }
         if (url.pathname === '/api/logout' && req.method === 'POST') { store.logout(token); return json(200,{ok:true},{'Set-Cookie':cookie('')}); }
+        if(url.pathname==='/api/catalog/summary'&&req.method==='GET')return json(200,store.catalogSummary());
+        if(url.pathname==='/api/catalog/page'&&req.method==='GET')return json(200,await catalogPager.page({kind:url.searchParams.get('kind'),query:url.searchParams.get('query')||'',cursor:url.searchParams.get('cursor')||null}));
         if (url.pathname === '/api/catalog' && req.method === 'GET') return json(200,store.catalog());
         if (url.pathname === '/api/requests' && req.method === 'GET') return json(200,{data:store.requests()});
         if (url.pathname === '/api/requests' && req.method === 'POST') return json(201,{data:store.saveRequest(await body(req),user)});
@@ -122,11 +126,11 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         const userMatch=/^\/api\/users\/(\d+)$/.exec(url.pathname);
         if(userMatch&&req.method==='POST')return json(200,{user:store.updateUser(Number(userMatch[1]),await body(req),user)});
         if (url.pathname === '/api/users' && req.method === 'POST') return json(201,{data:store.addUser(await body(req),user)});
-        if (url.pathname === '/api/catalog/import' && req.method === 'POST' && ['admin','super_admin'].includes(user.role)) return json(200,store.importDirectory(await body(req),user.id));
+        if (url.pathname === '/api/catalog/import' && req.method === 'POST' && ['admin','super_admin'].includes(user.role)) {const result=store.importDirectory(await body(req),user.id);catalogPager.clear();return json(200,result);}
         fail(404,'Раздел не найден или недостаточно прав.');
       }
       if (req.method !== 'GET') fail(404,'Страница не найдена.');
-      const files = { '/':'index.html','/app.js':'app.js','/styles.css':'styles.css','/design.css':'design.css','/vendor/tabulator/tabulator.min.js':'vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css':'vendor/tabulator/tabulator.min.css','/favicon.svg':'favicon.svg' };
+      const files = { '/':'index.html','/paged-list.js':'paged-list.js','/app.js':'app.js','/styles.css':'styles.css','/design.css':'design.css','/vendor/tabulator/tabulator.min.js':'vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css':'vendor/tabulator/tabulator.min.css','/favicon.svg':'favicon.svg' };
       const preset=/^\/avatars\/(cat|frog|robot|bear|owl)\.svg$/.test(url.pathname);
       const file = preset?url.pathname.slice(1):files[url.pathname];
       if (!file) fail(404,'Страница не найдена.');

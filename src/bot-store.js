@@ -27,11 +27,13 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
   function encrypt(value){const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',key,iv);const data=Buffer.concat([cipher.update(value,'utf8'),cipher.final()]);return{iv:iv.toString('base64'),tag:cipher.getAuthTag().toString('base64'),data:data.toString('base64')};}
   function decrypt(value){if(!value)return '';const cipher=createDecipheriv('aes-256-gcm',key,Buffer.from(value.iv,'base64'));cipher.setAuthTag(Buffer.from(value.tag,'base64'));return Buffer.concat([cipher.update(Buffer.from(value.data,'base64')),cipher.final()]).toString('utf8');}
   const requireAdmin=actor=>{if(!['admin','super_admin'].includes(actor?.role))fail(403,'Настройки бота доступны только менеджеру или администратору.');};
-  function getBotSettings(actor){requireAdmin(actor);const config={...defaults(),...read('bot_config',{})};const secret=read('bot_token',null);return {...config,timeZone,hasToken:Boolean(secret),tokenExpiresAt:secret?tokenExpiry(decrypt(secret)):null};}
+  function getBotSettings(actor){requireAdmin(actor);const config={...defaults(),...read('bot_config',{})};const secret=read('bot_token',null);return {...config,requestsPerMinute:config.requestsPerMinute??Math.min(60,Math.max(1,Math.round(60/config.intervalSeconds))),timeZone,hasToken:Boolean(secret),tokenExpiresAt:secret?tokenExpiry(decrypt(secret)):null};}
   function saveBotSettings(input,actor){
     requireAdmin(actor);
     if(typeof input.enabled!=='boolean'||typeof input.scheduleEnabled!=='boolean')fail(400,'Укажите состояние бота и расписания.');
-    if(!Number.isSafeInteger(input.intervalSeconds)||input.intervalSeconds<3||input.intervalSeconds>86400)fail(400,'Интервал опроса — целое число от 3 до 86400 секунд.');
+    const rate=input.requestsPerMinute??60/input.intervalSeconds;
+    if(!Number.isInteger(rate)||rate<1||rate>60)fail(400,'Агрессивность бота — целое число от 1 до 60 проверок в минуту.');
+    let intervalSeconds=60/rate;
     if(!Array.isArray(input.days)||input.days.some(day=>!Number.isInteger(day)||day<1||day>7)||input.days.length!==new Set(input.days).size||input.scheduleEnabled&&!input.days.length)fail(400,'Выберите дни работы бота.');
     if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(input.startTime)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(input.endTime)||input.scheduleEnabled&&input.startTime===input.endTime)fail(400,'Укажите корректное время начала и окончания. Для круглосуточной работы отключите расписание.');
     if(input.clearToken!==undefined&&typeof input.clearToken!=='boolean')fail(400,'Некорректная настройка токена.');
@@ -41,6 +43,10 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
     return transaction(()=>{
       const current={...defaults(),...read('bot_config',{})};
       if(input.revision!==current.revision)fail(409,'Настройки изменены другим администратором. Обновите страницу.');
+      const currentRate=current.requestsPerMinute??Math.min(60,Math.max(1,Math.round(60/current.intervalSeconds)));
+      const frequencyChanged=input.requestsPerMinute===undefined?input.intervalSeconds!==current.intervalSeconds:rate!==currentRate;
+      if(current.enabled&&!frequencyChanged)intervalSeconds=current.intervalSeconds;
+      if(current.enabled&&((supplied&&supplied!==decrypt(read('bot_token',null)))||input.clearToken||frequencyChanged||(input.acceptanceEnabled??current.acceptanceEnabled)!==current.acceptanceEnabled||(input.supplierId??current.supplierId)!==current.supplierId||input.scheduleEnabled||JSON.stringify(input.days)!==JSON.stringify(current.days)||input.startTime!==current.startTime||input.endTime!==current.endTime))fail(409,'Сначала выключите бота, чтобы изменить настройки.');
       const secret=input.clearToken?null:supplied?encrypt(supplied):read('bot_token',null);
       if(input.enabled&&!secret)fail(400,'Перед включением сохраните токен WB.');
       const exp=secret?tokenExpiry(decrypt(secret)):null;
@@ -49,8 +55,8 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
       if(typeof acceptanceEnabled!=='boolean'||!Number.isSafeInteger(supplierId)||supplierId<0||acceptanceEnabled&&supplierId===0)fail(400,'Для боевого режима укажите ID своего перевозчика (supplier_id).');
       if(/^[78]\d{10}$/.test(String(supplierId)))fail(400,'В ID компании введён номер телефона. Нужен supplier_id из ответа WB, а не логин.');
       write('bot_token',secret);
-      write('bot_config',{revision:current.revision+1,enabled:input.enabled,acceptanceEnabled,supplierId,intervalSeconds:input.intervalSeconds,scheduleEnabled:false,days:input.days,startTime:input.startTime,endTime:input.endTime,updatedAt:new Date().toISOString()});
-      audit(actor.id,'bot_settings_updated',null,`Бот ${input.enabled?'включён':'выключен'}; опрос ${input.intervalSeconds} сек.; принятие ${acceptanceEnabled?'боевое':'только cURL'}; ID компании ${supplierId}; расписание ${input.scheduleEnabled?'включено':'выключено'}${supplied?'; токен заменён':input.clearToken?'; токен удалён':''}`);
+      write('bot_config',{revision:current.revision+1,enabled:input.enabled,acceptanceEnabled,supplierId,intervalSeconds,requestsPerMinute:rate,scheduleEnabled:false,days:input.days,startTime:input.startTime,endTime:input.endTime,updatedAt:new Date().toISOString()});
+      audit(actor.id,'bot_settings_updated',null,`Бот ${input.enabled?'включён':'выключен'}; опрос ${intervalSeconds} сек.; принятие ${acceptanceEnabled?'боевое':'только cURL'}; ID компании ${supplierId}; расписание ${input.scheduleEnabled?'включено':'выключено'}${supplied?'; токен заменён':input.clearToken?'; токен удалён':''}`);
       setBotRuntime(input.enabled?{state:'starting',nextPollAt:null,error:null}:{state:'stopped',nextPollAt:null,error:null});
       return getBotSettings(actor);
     });
@@ -58,7 +64,7 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
   function botConfig(){return {...defaults(),...read('bot_config',{}),token:decrypt(read('bot_token',null)),timeZone};}
   function stopBot(reason){const config=read('bot_config',defaults());if(config.enabled){write('bot_config',{...config,enabled:false,revision:config.revision+1,updatedAt:new Date().toISOString()});audit(null,'bot_stopped',null,reason);}}
   function setBotRuntime(runtime){const old=read('bot_runtime',{});const value={...old,...runtime};if(JSON.stringify(old)!==JSON.stringify(value))write('bot_runtime',value);return value;}
-  function getBotStatus(actor){requireAdmin(actor);if(actor.role!=='super_admin')return {runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},events:[],logs:[],outcomes:[]};return {outcomes:db.prepare('SELECT * FROM bot_acceptance_results').all().map(r=>({...r,payload:JSON.parse(r.payload)})),serverVersion:'0.12.2',runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},logs:db.prepare('SELECT * FROM bot_logs ORDER BY id DESC LIMIT 100').all().map(row=>({...row,payload:JSON.parse(row.payload)})),events:db.prepare('SELECT id,kind,payload,created_at FROM bot_events ORDER BY id DESC LIMIT 1000').all().map(row=>({...row,payload:JSON.parse(row.payload)}))};}
+  function getBotStatus(actor){requireAdmin(actor);if(actor.role!=='super_admin')return {runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},events:[],logs:[],outcomes:[]};return {outcomes:db.prepare('SELECT * FROM bot_acceptance_results').all().map(r=>({...r,payload:JSON.parse(r.payload)})),serverVersion:'0.12.3',runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},logs:db.prepare('SELECT * FROM bot_logs ORDER BY id DESC LIMIT 100').all().map(row=>({...row,payload:JSON.parse(row.payload)})),events:db.prepare('SELECT id,kind,payload,created_at FROM bot_events ORDER BY id DESC LIMIT 1000').all().map(row=>({...row,payload:JSON.parse(row.payload)}))};}
   function recordBotCandidates(candidates,snapshot=null){return transaction(()=>{
     const old=new Map(db.prepare('SELECT * FROM bot_observations').all().map(row=>[row.id,row]));
     db.exec('UPDATE bot_observations SET active=0');

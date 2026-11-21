@@ -8,7 +8,7 @@ import {BotWorker} from '../src/bot.js';
 function setup(file=':memory:'){
  const store=openStore(file),admin=store.userCount()?store.users()[0]:store.addUser({username:'root',name:'Root',password:'password-12345'},null,true);
  if(!store.requests().length){store.importDirectory({transport:{drivers:[{id:1,name:'Driver'}],vehicles:[{id:2,name:'Vehicle'}],trailers:[{id:3,name:'Trailer'}]}},admin.id);store.saveRequest({routeId:61373,serviceDate:businessDate(),driverId:1,vehicleId:2,trailerId:null,priority:1},admin);}
- store.saveBotSettings({...store.getBotSettings(admin),enabled:true,acceptanceEnabled:true,supplierId:10,token:'test-token-value',intervalSeconds:3},admin);return {store,admin};
+ store.saveBotSettings({...store.getBotSettings(admin),enabled:true,acceptanceEnabled:true,supplierId:10,token:'test-token-value',requestsPerMinute:20,intervalSeconds:3},admin);return {store,admin};
 }
 const row=id=>({transport_request_id:id,route_id:61373,supplier_id:null,car_dt:businessDate()+'T23:00:00+03:00',request_status:'created',is_closed:false});
 const assigned=id=>({...row(id),supplier_id:10,driver_id:1,vehicle_id:2,request_status:null});

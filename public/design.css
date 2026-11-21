@@ -2180,3 +2180,5 @@ dialog::backdrop {
     transition-duration: 0.01ms !important;
   }
 }
+
+.bot-settings-fields{border:0;padding:0;margin:0;min-width:0}.bot-settings-fields:disabled{opacity:.58}.bot-rate-control{display:flex;align-items:center;gap:12px}.bot-rate-control input{max-width:130px}.bot-rate-control span{font-size:14px;color:var(--muted)}

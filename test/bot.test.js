@@ -15,7 +15,7 @@ function init(file=':memory:'){
 }
 function config(store,admin,extra={}){
   const current=store.getBotSettings(admin);
-  return store.saveBotSettings({...current,token:testToken,...extra},admin);
+  return store.saveBotSettings({...current,token:testToken,...extra,...(extra.intervalSeconds!==undefined&&!('requestsPerMinute' in extra)?{requestsPerMinute:60/extra.intervalSeconds}:{})},admin);
 }
 function addPlan(store,admin){
   store.importDirectory({transport:{drivers:[{id:1,name:'Driver'}],vehicles:[{id:2,name:'Vehicle'}],trailers:[]}},admin.id);
@@ -25,7 +25,7 @@ test('default settings, validation and admin-only access protect bot configurati
   const{store,admin}=init();try{
     const initial=store.getBotSettings(admin);assert.equal(initial.intervalSeconds,60);assert.equal(initial.enabled,false);assert.equal(initial.hasToken,false);
     assert.throws(()=>store.getBotSettings({role:'logist'}),/администратору/);
-    for(const extra of [{supplierId:79025981410},{intervalSeconds:2},{intervalSeconds:1.5},{days:[1,1]},{scheduleEnabled:true,days:[]},{scheduleEnabled:true,startTime:'08:00',endTime:'08:00'}])assert.throws(()=>config(store,admin,extra));
+    for(const extra of [{supplierId:79025981410},{requestsPerMinute:0},{requestsPerMinute:61},{requestsPerMinute:1.5},{days:[1,1]},{scheduleEnabled:true,days:[]},{scheduleEnabled:true,startTime:'08:00',endTime:'08:00'}])assert.throws(()=>config(store,admin,extra));
     assert.throws(()=>store.saveBotSettings({...initial,enabled:true},admin),/токен/);
     const saved=config(store,admin,{enabled:true,intervalSeconds:3});assert.equal(saved.intervalSeconds,3);assert.equal(saved.hasToken,true);assert.equal(saved.revision,1);
     assert.equal(JSON.stringify(saved).includes(testToken),false);assert.equal(JSON.stringify(store.activity()).includes(testToken),false);
@@ -75,7 +75,7 @@ test('no plans and outside schedule make no requests; denied token disables the 
   const{store,admin}=init();let calls=0;const worker=new BotWorker(store,{fetchImpl:async()=>{calls++;return new Response('',{status:401});}});
   try{
     config(store,admin,{enabled:true});await worker.tick();assert.equal(calls,0);assert.equal(store.getBotStatus(admin).runtime.state,'no_plans');
-    addPlan(store,admin);config(store,admin,{enabled:true,scheduleEnabled:true,days:[1],startTime:'01:00',endTime:'02:00'});
+    addPlan(store,admin);config(store,admin,{enabled:false});config(store,admin,{enabled:true,scheduleEnabled:true,days:[1],startTime:'01:00',endTime:'02:00'});
     assert.equal(store.getBotSettings(admin).scheduleEnabled,false);
     config(store,admin,{enabled:true,scheduleEnabled:false});await worker.tick();assert.equal(calls,1);assert.equal(store.getBotSettings(admin).enabled,false);
   }finally{store.close();}
@@ -173,4 +173,19 @@ test('legacy phone in company ID is removed before WB requests and cannot be sav
  assert.equal(migrated.botConfig().supplierId,0);assert.equal(migrated.botConfig().enabled,false);assert.equal(migrated.botConfig().acceptanceEnabled,false);
  assert.throws(()=>migrated.saveBotSettings({...migrated.getBotSettings(admin),supplierId:79025981410},admin),/телефона/);
  }finally{store.close();}
+});
+
+test('aggression accepts 1–60 checks per minute, stores fractional intervals and locks running configuration',()=>{
+ const {store,admin}=init();try{
+ for(const rate of [1,4,7,60]){const saved=store.saveBotSettings({...store.getBotSettings(admin),requestsPerMinute:rate,token:testToken},admin);assert.equal(saved.requestsPerMinute,rate);assert.equal(store.botConfig().intervalSeconds,60/rate);}
+ for(const rate of [0,61,1.5,'4'])assert.throws(()=>store.saveBotSettings({...store.getBotSettings(admin),requestsPerMinute:rate},admin),/Агрессивность/);
+ const current=store.getBotSettings(admin);store.saveBotSettings({...current,enabled:true,token:''},admin);
+ for(const changed of [{requestsPerMinute:4},{supplierId:10095401},{acceptanceEnabled:true,supplierId:10095401},{token:'replacement-token-test'},{clearToken:true}])assert.throws(()=>store.saveBotSettings({...store.getBotSettings(admin),...changed,enabled:false},admin),/Сначала выключите/);
+ const stopped=store.saveBotSettings({...store.getBotSettings(admin),enabled:false,token:''},admin);assert.equal(stopped.enabled,false);
+ const saved=store.saveBotSettings({...stopped,requestsPerMinute:4,supplierId:10095401,acceptanceEnabled:true,token:'replacement-token-test'},admin);assert.equal(saved.intervalSeconds,15);assert.equal(store.botConfig().token,'replacement-token-test');assert.equal(saved.supplierId,10095401);assert.equal(saved.acceptanceEnabled,true);
+ }finally{store.close();}
+});
+
+test('legacy interval can always be stopped without changing running settings',()=>{
+ const {store,admin}=init();try{config(store,admin,{enabled:true});const value=store.botConfig();delete value.token;delete value.requestsPerMinute;value.intervalSeconds=17;store.db.prepare("UPDATE settings SET value=? WHERE key='bot_config'").run(JSON.stringify(value));const stopped=store.saveBotSettings({...store.getBotSettings(admin),enabled:false,token:''},admin);assert.equal(stopped.enabled,false);assert.equal(stopped.intervalSeconds,17);}finally{store.close();}
 });

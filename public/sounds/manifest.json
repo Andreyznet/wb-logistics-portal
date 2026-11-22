@@ -1,0 +1,50 @@
+[
+  {
+    "file": "buzzer-alarm.ogg",
+    "bytes": 11368,
+    "durationSeconds": 1.103,
+    "sampleRate": 44100,
+    "peak": 0.5844,
+    "sha256": "adf8d4a90fb218a1447a0d00cf361e0bf60d0e45530951da79462b8354103082"
+  },
+  {
+    "file": "classic-alarm.ogg",
+    "bytes": 27052,
+    "durationSeconds": 2.07,
+    "sampleRate": 44100,
+    "peak": 0.7604,
+    "sha256": "b68968d3da303ca26111dfa2334008bf1258629eb5f75cc7c6f25525d5b71b29"
+  },
+  {
+    "file": "digital-alarm.ogg",
+    "bytes": 16130,
+    "durationSeconds": 2.112,
+    "sampleRate": 44100,
+    "peak": 0.5759,
+    "sha256": "536bcfb1d1e0e5a917233b268bdcdd85949a5c64941c1b96344029ac9cd008b9"
+  },
+  {
+    "file": "police-siren.wav",
+    "bytes": 179652,
+    "durationSeconds": 5.613,
+    "sampleRate": 16000,
+    "peak": 0.9523,
+    "sha256": "700badd0be1496fcb87444f14f84ca67bebd7c74a81cb1f41eacd0f2fa1e48db"
+  },
+  {
+    "file": "pulse-alarm.ogg",
+    "bytes": 5898,
+    "durationSeconds": 0.251,
+    "sampleRate": 44100,
+    "peak": 0.2978,
+    "sha256": "811612558a9e76830e9b7f5473b3a9310d9c86c6246c3e8cad14dd03c1589edd"
+  },
+  {
+    "file": "urgent-alarm.ogg",
+    "bytes": 21153,
+    "durationSeconds": 2.372,
+    "sampleRate": 44100,
+    "peak": 0.4114,
+    "sha256": "66a701ce0f5ec1f692faefb456205dc383f6745e3a958e44caa880f26b01b797"
+  }
+]

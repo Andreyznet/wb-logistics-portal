@@ -2243,3 +2243,8 @@ dialog::backdrop {
 .history-filters input{min-height:38px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);max-width:100%;box-sizing:border-box}
 .history-filters .history-search{flex:1;min-width:180px}.history-filters .field-hint,.history-error{flex-basis:100%;margin:0}.history-error{color:var(--danger);font-size:13px}.history-error:empty{display:none}
 @media(max-width:600px){.history-filters{padding:12px;gap:10px}.history-filters label{flex:1 1 100%}.history-filters button{flex:1}}
+
+.notification-sound-settings{border-top:1px solid var(--line);margin-top:20px;padding-top:20px}
+.sound-preview-actions{display:flex;gap:10px;flex-wrap:wrap}.sound-settings-error:empty{display:none}
+.notification-sound-settings input[type=range]{width:100%;padding:0;accent-color:var(--accent)}
+@media(max-width:600px){.sound-preview-actions button{flex:1}}

@@ -1,3 +1,4 @@
+import {notificationSounds} from './notification-sounds.js';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -43,6 +44,9 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     try{db.exec("CREATE TABLE users_roles(id INTEGER PRIMARY KEY,username TEXT UNIQUE NOT NULL,name TEXT NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('super_admin','admin','logist')),created_at TEXT NOT NULL); INSERT INTO users_roles SELECT * FROM users; UPDATE users_roles SET role='super_admin' WHERE id=(SELECT min(id) FROM users_roles WHERE role='admin'); DROP TABLE users; ALTER TABLE users_roles RENAME TO users; COMMIT;");}catch(e){db.exec('ROLLBACK');throw e;}finally{db.exec('PRAGMA foreign_keys=ON');}
   }
   db.exec('CREATE TABLE IF NOT EXISTS user_avatars(user_id INTEGER PRIMARY KEY REFERENCES users(id),preset TEXT,image BLOB,mime TEXT,revision TEXT NOT NULL)');
+  db.exec("CREATE TABLE IF NOT EXISTS user_notification_settings(user_id INTEGER PRIMARY KEY REFERENCES users(id),sound_id TEXT NOT NULL,volume INTEGER NOT NULL)");
+  const notificationSettings=id=>{const saved=db.prepare('SELECT sound_id,volume FROM user_notification_settings WHERE user_id=?').get(id);return {soundId:saved?.sound_id||'digital-alarm',volume:saved?.volume??80};};
+  function saveNotificationSettings(input,actor){if(!actor?.id)fail(401,'Войдите в аккаунт.');if(!input||!notificationSounds.some(s=>s.id===input.soundId)||!Number.isInteger(input.volume)||input.volume<10||input.volume>100)fail(400,'Выберите звук и громкость от 10 до 100%.');db.prepare('INSERT INTO user_notification_settings VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET sound_id=excluded.sound_id,volume=excluded.volume').run(actor.id,input.soundId,input.volume);return {settings:notificationSettings(actor.id)};}
   const defaultAvatar=id=>'/avatars/'+['cat','frog','robot','bear','owl'][(id-1)%5]+'.svg';
   const avatarUrl=id=>{const value=db.prepare('SELECT preset,revision FROM user_avatars WHERE user_id=?').get(id);return value?value.preset?'/avatars/'+value.preset+'.svg':'/api/users/'+id+'/avatar?v='+value.revision:defaultAvatar(id);};
   const now = () => new Date().toISOString();
@@ -51,7 +55,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     try { const result = fn(); db.exec('COMMIT'); return result; }
     catch (error) { db.exec('ROLLBACK'); throw error; }
   }
-  const publicUser = row => row ? { id: row.id, username: row.username, name: row.name, role: row.role, avatar:avatarUrl(row.id) } : null;
+  const publicUser = row => row ? { id: row.id, username: row.username, name: row.name, role: row.role, notificationSettings:notificationSettings(row.id), avatar:avatarUrl(row.id) } : null;
   function audit(userId, action, requestId = null, detail = '') {
     db.prepare('INSERT INTO audit(user_id,action,request_id,detail,created_at) VALUES(?,?,?,?,?)').run(userId, action, requestId, detail, now());
   }
@@ -251,7 +255,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     });
   }
   const botStore=createBotStore({db,file,timeZone,audit,transaction,fail});
-  return { ...botStore, db, timeZone, userCount, addUser, updateUser, saveAvatar, getAvatar, login, createSession, session, importDirectory, catalog, catalogSummary, catalogPage, cacheCatalogRows, saveRequest, changeStatus, watchRequest,
+  return { notificationSettings,saveNotificationSettings,...botStore, db, timeZone, userCount, addUser, updateUser, saveAvatar, getAvatar, login, createSession, session, importDirectory, catalog, catalogSummary, catalogPage, cacheCatalogRows, saveRequest, changeStatus, watchRequest,
     logout: token => db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hashSession(token || '')),
     users: () => db.prepare('SELECT id,username,name,role,created_at FROM users ORDER BY name').all().map(user=>({...user,avatar:avatarUrl(user.id)})),
     requests: (actor=null) => db.prepare("SELECT r.*,u.name AS created_by_name,EXISTS(SELECT 1 FROM request_watchers w WHERE w.request_id=r.id AND w.user_id=?) AS watching,(SELECT a.id FROM acceptance_attempts a WHERE a.plan_id=r.id AND a.state='success' ORDER BY a.updated_at DESC LIMIT 1) AS accepted_wb_id FROM requests r JOIN users u ON r.created_by=u.id ORDER BY r.service_date,r.priority,r.id").all(actor?.id||0),

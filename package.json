@@ -1,15 +1,15 @@
 {
   "name": "wb-logistics-portal",
   "private": true,
-  "version": "0.16.0",
+  "version": "0.17.0",
   "type": "module",
   "scripts": {
     "dev": "node --env-file-if-exists=.env src/dev.js",
     "start": "node --env-file-if-exists=.env src/server.js",
-    "build": "node --check src/server.js && node --check public/app.js && node --check public/paged-list.js && node --check public/overview.js",
+    "build": "node --check src/server.js && node --check public/app.js && node --check public/paged-list.js && node --check public/overview.js && node --check public/notification-audio.js",
     "test": "node --test",
     "administrator": "node --env-file-if-exists=.env src/administrator-cli.js",
-    "lint": "node --check src/server.js && node --check public/app.js && node --check public/paged-list.js && node --check public/overview.js",
+    "lint": "node --check src/server.js && node --check public/app.js && node --check public/paged-list.js && node --check public/overview.js && node --check public/notification-audio.js",
     "demo": "node --env-file-if-exists=.env src/demo.js",
     "password-reset": "node --env-file-if-exists=.env src/password-reset-cli.js"
   },

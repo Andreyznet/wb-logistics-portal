@@ -1,3 +1,4 @@
+import {notificationSounds} from './notification-sounds.js';
 import {dashboard} from './dashboard.js';
 import { makeDirectoryApi, parseTransport, collectPartnerships, buildDirectory } from './directory-api.js';
 import { createCatalogPager } from './catalog-pager.js';
@@ -49,7 +50,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       if (req.method === 'POST' && req.headers.origin !== origin) fail(403,'Недопустимый источник запроса.');
       const user = store.session(token);
       if (url.pathname === '/api/session' && req.method === 'GET') return json(200, {
-        serverVersion:'0.16.0',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
+        serverVersion:'0.17.0',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
         today: businessDate(store.timeZone), timeZone: store.timeZone,
         ...(demoMode ? { demoMode: true } : {}),
       });
@@ -80,6 +81,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         if(url.pathname==='/api/me/alerts'&&req.method==='GET')return json(200,{data:store.userAlerts(user)});
         const alertMatch=/^\/api\/me\/alerts\/(\d+)\/ack$/.exec(url.pathname);
         if(alertMatch&&req.method==='POST')return json(200,store.acknowledgeAlert(Number(alertMatch[1]),user));
+        if(url.pathname==='/api/me/notification-settings'){if(req.method==='GET')return json(200,{settings:store.notificationSettings(user.id),sounds:notificationSounds});if(req.method==='POST')return json(200,store.saveNotificationSettings(await body(req),user));}
         if(url.pathname==='/api/me/avatar'&&req.method==='POST')return json(200,{user:store.saveAvatar(await body(req),user)});
         const avatarMatch=/^\/api\/users\/(\d+)\/avatar$/.exec(url.pathname);
         if(avatarMatch&&req.method==='GET'){const avatar=store.getAvatar(Number(avatarMatch[1]));res.writeHead(200,{...headers,'Content-Type':avatar.mime});return res.end(avatar.image);}
@@ -143,12 +145,13 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         fail(404,'Раздел не найден или недостаточно прав.');
       }
       if (req.method !== 'GET') fail(404,'Страница не найдена.');
-      const files = { '/':'index.html','/paged-list.js':'paged-list.js','/overview.js':'overview.js','/app.js':'app.js','/styles.css':'styles.css','/design.css':'design.css','/vendor/tabulator/tabulator.min.js':'vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css':'vendor/tabulator/tabulator.min.css','/favicon.svg':'favicon.svg' };
+      const files = { '/':'index.html','/paged-list.js':'paged-list.js','/overview.js':'overview.js','/notification-audio.js':'notification-audio.js','/app.js':'app.js','/styles.css':'styles.css','/design.css':'design.css','/vendor/tabulator/tabulator.min.js':'vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css':'vendor/tabulator/tabulator.min.css','/favicon.svg':'favicon.svg' };
       const preset=/^\/avatars\/(cat|frog|robot|bear|owl)\.svg$/.test(url.pathname);
-      const file = preset?url.pathname.slice(1):files[url.pathname];
+      const sound=notificationSounds.some(s=>s.url===url.pathname);
+      const file = sound||preset?url.pathname.slice(1):files[url.pathname];
       if (!file) fail(404,'Страница не найдена.');
-      const mime = file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html';
-      res.writeHead(200,{...headers,'Content-Type':`${mime}; charset=utf-8`}); res.end(await readFile(resolve(publicDir,file)));
+      const mime = file.endsWith('.ogg')?'audio/ogg':file.endsWith('.wav')?'audio/wav':file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html';
+      res.writeHead(200,{...headers,'Content-Type':mime.startsWith('audio/')?mime:`${mime}; charset=utf-8`}); res.end(await readFile(resolve(publicDir,file)));
     } catch (error) {
       if (!(error instanceof AppError)) console.error('Portal request failed:', error.code || error.name);
       if (!res.headersSent) json(error.status || 500,{error:error instanceof AppError ? error.message : 'Не удалось выполнить операцию. Повторите попытку.'});

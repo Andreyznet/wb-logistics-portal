@@ -48,7 +48,7 @@ async function api(path,{method='GET',data,headers={},signal}={}){
   return result;
 }
 async function boot(){
-  try{state.session=await api('/api/session');state.user=state.session.user;if(state.session.serverVersion!=='0.17.0')throw new Error('Версии страницы и сервера различаются. Обновите папку src и перезапустите сервер портала.');if(!state.user)return renderAuth();await load();render();}
+  try{state.session=await api('/api/session');state.user=state.session.user;if(state.session.serverVersion!=='0.17.1')throw new Error('Версии страницы и сервера различаются. Обновите папку src и перезапустите сервер портала.');if(!state.user)return renderAuth();await load();render();}
   catch(error){app.innerHTML=`<main class="boot-error-screen"><section class="boot-error-card" aria-labelledby="boot-error-title"><div class="boot-error-icon" aria-hidden="true">${icon('info')}</div><h1 id="boot-error-title">Не удалось загрузить кабинет</h1><p>${esc(error.message)}</p><div class="boot-error-actions"><button class="primary" id="retry">Повторить</button><button class="secondary" id="error-logout">Выйти из аккаунта</button></div></section></main>`;document.querySelector('#retry').onclick=boot;document.querySelector('#error-logout').onclick=async()=>{try{await api('/api/logout',{method:'POST',data:{}});state.user=null;state.view='dashboard';state.bot=null;await boot();}catch(e){toast(e.message,'error');}};}
 }
 async function load(){
@@ -312,12 +312,25 @@ let alarmAudio=null,alarmTimer=null,activeAcceptanceAlert=null,alertPollBusy=fal
 const alarmOscillators=new Set();
 const acceptanceAudioPlayer=new NotificationAudioPlayer();let alarmFileFailed=false;
 const alarmSoundFiles={'digital-alarm':'digital-alarm.ogg','pulse-alarm':'pulse-alarm.ogg','urgent-alarm':'urgent-alarm.ogg','buzzer-alarm':'buzzer-alarm.ogg','classic-alarm':'classic-alarm.ogg','police-siren':'police-siren.wav'};
-async function unlockAlarmAudio(){try{await acceptanceAudioPlayer.unlock();alarmAudio=acceptanceAudioPlayer.context;}catch{}}
-document.addEventListener('pointerdown',()=>{void unlockAlarmAudio();},{once:true});
+function updateAlarmSoundNotice(){const notice=document.querySelector('#alert-sound-notice');if(notice)notice.hidden=alarmAudio?.state==='running';}
+async function unlockAlarmAudio(){
+ try{
+  const previous=alarmAudio,pending=acceptanceAudioPlayer.unlock();alarmAudio=acceptanceAudioPlayer.context;
+  if(alarmAudio&&alarmAudio!==previous)alarmAudio.onstatechange=()=>{updateAlarmSoundNotice();if(alarmAudio.state==='running'&&activeAcceptanceAlert)ringAcceptanceAlarm();};
+  updateAlarmSoundNotice();
+  await pending;updateAlarmSoundNotice();if(activeAcceptanceAlert&&alarmAudio?.state==='running')ringAcceptanceAlarm();
+ }catch{updateAlarmSoundNotice();}
+}
+// Touch activation is often granted on touchend/click, rather than pointerdown.
+// Keep the listeners: mobile browsers may suspend audio again after backgrounding.
+for(const event of ['pointerdown','touchend','click','keydown'])document.addEventListener(event,()=>{void unlockAlarmAudio();},{capture:true,passive:true});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)void unlockAlarmAudio();});
+window.addEventListener('pageshow',()=>{void unlockAlarmAudio();});
 function stopAcceptanceAlarm(){acceptanceAudioPlayer.stop();alarmFileFailed=false;clearInterval(alarmTimer);alarmTimer=null;for(const osc of alarmOscillators){try{osc.stop();}catch{}}alarmOscillators.clear();}
 function fallbackAcceptanceAlarm(){if(!activeAcceptanceAlert||alarmAudio?.state!=='running')return;for(const [delay,freq] of [[0,740],[.25,988],[.5,740]]){const osc=alarmAudio.createOscillator(),gain=alarmAudio.createGain(),at=alarmAudio.currentTime+delay;osc.frequency.value=freq;gain.gain.setValueAtTime(0,at);gain.gain.linearRampToValueAtTime(.3*(state.user?.notificationSettings?.volume??80)/100,at+.025);gain.gain.exponentialRampToValueAtTime(.001,at+.2);osc.connect(gain).connect(alarmAudio.destination);alarmOscillators.add(osc);osc.onended=()=>alarmOscillators.delete(osc);osc.start(at);osc.stop(at+.22);}}
 function ringAcceptanceAlarm(){
- if(!activeAcceptanceAlert||alarmAudio?.state!=='running')return;
+ if(!activeAcceptanceAlert)return;
+ if(alarmAudio?.state!=='running'){void unlockAlarmAudio();return;}
  if(alarmFileFailed){fallbackAcceptanceAlarm();return;}
  if(acceptanceAudioPlayer.source||acceptanceAudioPlayer.loading)return;
  const current=activeAcceptanceAlert,settings=state.user?.notificationSettings||{},url='/sounds/'+(alarmSoundFiles[settings.soundId]||alarmSoundFiles['digital-alarm']);
@@ -332,11 +345,10 @@ async function pollAcceptanceAlerts(){
  if(activeAcceptanceAlert){if(!result.data.some(r=>r.id===activeAcceptanceAlert.id)){stopAcceptanceAlarm();activeAcceptanceAlert=null;dialog.close();}return;}
  if(!result.data.length||document.querySelector('dialog[open]'))return;
  const entry=result.data[0],p=entry.payload;activeAcceptanceAlert={...entry,userId};
- dialog.innerHTML=`<div class="acceptance-success-mark">✓</div><h2 id="acceptance-alert-title">${p.test?'Тест уведомления':'Заявка взята в работу'}</h2><p>${p.test?'Проверка окна и звука. Запрос принятия в WB не отправлялся.':p.watching?'Вы следите за этой заявкой. Автор: '+esc(p.author||'коллега')+'. WB подтвердил назначение экипажа.':'WB подтвердил назначение вашего экипажа.'}</p><dl class="runtime-list"><div><dt>Заявка WB / план</dt><dd>${esc(p.id)} / №${esc(p.planId)}</dd></div><div><dt>Маршрут</dt><dd>${esc(p.routeId)} ${esc(p.routeName)}</dd></div><div><dt>Подача</dt><dd>${esc(timeLabel(p.carDt))}</dd></div><div><dt>Водитель</dt><dd>${esc(p.driver)}</dd></div><div><dt>Автомобиль</dt><dd>${esc(p.vehicle)}</dd></div>${p.trailer?`<div><dt>Прицеп</dt><dd>${esc(p.trailer)}</dd></div>`:''}</dl><button class="secondary" id="enable-alert-sound" type="button">Включить звук</button><p class="form-error error-box" role="alert"></p><button class="primary" id="ack-acceptance" type="button">Ок</button>`;
+ dialog.innerHTML=`<div class="acceptance-success-mark">✓</div><h2 id="acceptance-alert-title">${p.test?'Тест уведомления':'Заявка взята в работу'}</h2><p>${p.test?'Проверка окна и звука. Запрос принятия в WB не отправлялся.':p.watching?'Вы следите за этой заявкой. Автор: '+esc(p.author||'коллега')+'. WB подтвердил назначение экипажа.':'WB подтвердил назначение вашего экипажа.'}</p><dl class="runtime-list"><div><dt>Заявка WB / план</dt><dd>${esc(p.id)} / №${esc(p.planId)}</dd></div><div><dt>Маршрут</dt><dd>${esc(p.routeId)} ${esc(p.routeName)}</dd></div><div><dt>Подача</dt><dd>${esc(timeLabel(p.carDt))}</dd></div><div><dt>Водитель</dt><dd>${esc(p.driver)}</dd></div><div><dt>Автомобиль</dt><dd>${esc(p.vehicle)}</dd></div>${p.trailer?`<div><dt>Прицеп</dt><dd>${esc(p.trailer)}</dd></div>`:''}</dl><p id="alert-sound-notice" class="field-hint" role="status" hidden>Браузер приостановил звук. Коснитесь окна уведомления, чтобы сигнал заиграл.</p><p class="form-error error-box" role="alert"></p><button class="primary" id="ack-acceptance" type="button">Ок</button>`;
  void refreshRequestState();
  dialog.oncancel=event=>event.preventDefault();dialog.showModal();
- const sound=dialog.querySelector('#enable-alert-sound');sound.hidden=alarmAudio?.state==='running';sound.onclick=async()=>{await unlockAlarmAudio();sound.hidden=alarmAudio?.state==='running';ringAcceptanceAlarm();};
- ringAcceptanceAlarm();alarmTimer=setInterval(ringAcceptanceAlarm,1600);
+ void unlockAlarmAudio();ringAcceptanceAlarm();alarmTimer=setInterval(ringAcceptanceAlarm,1600);
  dialog.querySelector('#ack-acceptance').onclick=async event=>{const button=event.currentTarget;button.disabled=true;try{await api('/api/me/alerts/'+entry.id+'/ack',{method:'POST',data:{}});stopAcceptanceAlarm();activeAcceptanceAlert=null;dialog.close();void pollAcceptanceAlerts();}catch(error){dialog.querySelector('.form-error').textContent=error.message;}finally{button.disabled=false;}};
  }catch{ /* Retry transient failures without interrupting the current alarm. */ }finally{alertPollBusy=false;}
 }

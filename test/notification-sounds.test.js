@@ -35,3 +35,16 @@ test('looping player stops immediately, caches decoded audio and applies persona
 test('late audio download cannot start after alert acknowledgement or preview close',async()=>{
  const h=await audioHarness(),pending=vm.runInContext("player.play('/sounds/test.ogg',80,{loop:true})",h.scope);await new Promise(setImmediate);vm.runInContext('player.stop()',h.scope);h.resolve();assert.equal(await pending,false);assert.equal(h.sources.length,0);
 });
+
+test('touch/click activation retries after blocked pointerdown and resumes the active alert without a sound button',async()=>{
+ const source=await readFile(new URL('../public/app.js',import.meta.url),'utf8');assert.equal(source.includes('id="enable-alert-sound"'),false);
+ const block=source.slice(source.indexOf('let alarmAudio=null'),source.indexOf('async function pollAcceptanceAlerts()'));
+ const listeners={},notice={hidden:true},plays=[];let allowed=false;
+ class Player{constructor(){this.context=null;this.source=null;this.loading=false;}async unlock(){this.context??={state:'suspended'};if(allowed)this.context.state='running';}stop(){this.source=null;}async play(url,volume,options){plays.push({url,volume,options});this.source={};}}
+ const context=vm.createContext({NotificationAudioPlayer:Player,state:{user:{notificationSettings:{soundId:'police-siren',volume:65}}},document:{hidden:false,querySelector:()=>notice,addEventListener:(name,fn)=>{listeners[name]=fn;}},window:{addEventListener:()=>{}},clearInterval:()=>{}});vm.runInContext(block,context);
+ vm.runInContext('activeAcceptanceAlert={id:1};ringAcceptanceAlarm()',context);await new Promise(setImmediate);assert.equal(plays.length,0);assert.equal(notice.hidden,false);
+ listeners.pointerdown();await new Promise(setImmediate);assert.equal(plays.length,0);
+ allowed=true;listeners.touchend();await new Promise(setImmediate);assert.equal(plays.length,1);assert.equal(plays[0].url,'/sounds/police-siren.wav');assert.equal(plays[0].volume,65);assert.equal(plays[0].options.loop,true);assert.equal(notice.hidden,true);
+ listeners.click();await new Promise(setImmediate);assert.equal(plays.length,1);
+ vm.runInContext("alarmAudio.state='suspended';acceptanceAudioPlayer.source=null",context);listeners.click();await new Promise(setImmediate);assert.equal(plays.length,2);
+});

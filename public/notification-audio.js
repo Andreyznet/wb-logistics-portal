@@ -1,6 +1,6 @@
 class NotificationAudioPlayer {
  constructor(){this.context=null;this.buffers=new Map();this.source=null;this.gain=null;this.generation=0;this.loading=false;}
- async unlock(){this.context??=new (window.AudioContext||window.webkitAudioContext)();await this.context.resume();}
+ async unlock(){if(!this.context||this.context.state==='closed')this.context=new (window.AudioContext||window.webkitAudioContext)();await this.context.resume();}
  get ready(){return this.context?.state==='running';}
  stop(){this.generation++;this.loading=false;const source=this.source;this.source=null;try{source?.stop();}catch{}source?.disconnect();this.gain?.disconnect();this.gain=null;}
  async play(url,volume,{loop=false}={}){

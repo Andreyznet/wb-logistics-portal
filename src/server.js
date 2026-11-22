@@ -49,7 +49,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       if (req.method === 'POST' && req.headers.origin !== origin) fail(403,'Недопустимый источник запроса.');
       const user = store.session(token);
       if (url.pathname === '/api/session' && req.method === 'GET') return json(200, {
-        serverVersion:'0.15.6',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
+        serverVersion:'0.16.0',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
         today: businessDate(store.timeZone), timeZone: store.timeZone,
         ...(demoMode ? { demoMode: true } : {}),
       });
@@ -100,15 +100,16 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         }
         if (url.pathname === '/api/bot/settings') {
           if(!['admin','super_admin'].includes(user.role))fail(403,'Настройки бота доступны менеджеру и администратору.');
-          if(req.method==='GET')return json(200,{settings:store.getBotSettings(user),...store.getBotStatus(user)});
+          if(req.method==='GET')return json(200,{settings:store.getBotSettings(user),...store.getBotStatus(user,url.searchParams.get('summary')==='1')});
           if(req.method==='POST'){
             const input=await body(req);
             if(demoMode&&input.enabled)fail(400,'Демо не запускает мониторинг. Остановите сервер и запустите npm run dev или npm start.');
             const settings=store.saveBotSettings(input,user);
             botWorker?.changed();
-            return json(200,{settings,...store.getBotStatus(user)});
+            return json(200,{settings,...store.getBotStatus(user,url.searchParams.get('summary')==='1')});
           }
         }
+        if(req.method==='GET'&&['/api/bot/history/logs','/api/bot/history/events'].includes(url.pathname))return json(200,store.botHistoryPage(url.pathname.endsWith('/logs')?'logs':'events',Object.fromEntries(url.searchParams),user));
         const deleteEventMatch=/^\/api\/bot\/events\/(\d+)\/delete$/.exec(url.pathname);
         if(deleteEventMatch&&req.method==='POST')return json(200,store.deleteBotEvent(Number(deleteEventMatch[1]),user));
         const attemptMatch=/^\/api\/bot\/attempts\/(\d+)$/.exec(url.pathname);
@@ -117,7 +118,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         if(snapshotMatch&&req.method==='GET')return json(200,store.getBotSnapshot(Number(snapshotMatch[1]),user));
         if (url.pathname === '/api/bot/status' && req.method === 'GET') {
           if(!['admin','super_admin'].includes(user.role))fail(403,'Состояние бота доступно менеджеру и администратору.');
-          return json(200,{settings:store.getBotSettings(user),...store.getBotStatus(user)});
+          return json(200,{settings:store.getBotSettings(user),...store.getBotStatus(user,url.searchParams.get('summary')==='1')});
         }
         if (url.pathname === '/api/logout' && req.method === 'POST') { store.logout(token); return json(200,{ok:true},{'Set-Cookie':cookie('')}); }
         if(url.pathname==='/api/dashboard'&&req.method==='GET')return json(200,dashboard(store,user));

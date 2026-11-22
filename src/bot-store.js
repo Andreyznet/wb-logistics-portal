@@ -1,5 +1,6 @@
 import { randomBytes, createCipheriv, createDecipheriv, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
+import {createBotHistory} from './bot-history.js';
 import { createAcceptanceStore } from './acceptance-store.js';
 import { join, dirname } from 'node:path';
 
@@ -19,6 +20,7 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
   }
   db.exec(`CREATE TABLE IF NOT EXISTS bot_observations(id INTEGER PRIMARY KEY,fingerprint TEXT NOT NULL,active INTEGER NOT NULL,payload TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS acceptance_alerts(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),request_id INTEGER NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL,ack_at TEXT,UNIQUE(user_id,request_id)); CREATE TABLE IF NOT EXISTS bot_acceptance_results(id INTEGER PRIMARY KEY,kind TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS bot_snapshots(id INTEGER PRIMARY KEY,payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS bot_logs(id INTEGER PRIMARY KEY,kind TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS bot_events(id INTEGER PRIMARY KEY,kind TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);`);
+  const history=createBotHistory(db,fail);
   const read=(name,fallback)=>{const r=db.prepare('SELECT value FROM settings WHERE key=?').get(name);return r?JSON.parse(r.value):fallback;};
   const write=(name,value)=>db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(name,JSON.stringify(value));
   // Discard legacy phone values once, before any API consumer can use them as a supplier ID.
@@ -64,18 +66,18 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
   function botConfig(){return {...defaults(),...read('bot_config',{}),token:decrypt(read('bot_token',null)),timeZone};}
   function stopBot(reason){const config=read('bot_config',defaults());if(config.enabled){write('bot_config',{...config,enabled:false,revision:config.revision+1,updatedAt:new Date().toISOString()});audit(null,'bot_stopped',null,reason);}}
   function setBotRuntime(runtime){const old=read('bot_runtime',{});const value={...old,...runtime};if(JSON.stringify(old)!==JSON.stringify(value))write('bot_runtime',value);return value;}
-  function getBotStatus(actor){requireAdmin(actor);if(actor.role!=='super_admin')return {runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},events:[],logs:[],outcomes:[]};return {outcomes:db.prepare('SELECT * FROM bot_acceptance_results').all().map(r=>({...r,payload:JSON.parse(r.payload)})),serverVersion:'0.15.6',runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},logs:db.prepare('SELECT * FROM bot_logs ORDER BY id DESC LIMIT 100').all().map(row=>({...row,payload:JSON.parse(row.payload)})),events:db.prepare('SELECT id,kind,payload,created_at FROM bot_events ORDER BY id DESC LIMIT 1000').all().map(row=>({...row,payload:JSON.parse(row.payload)}))};}
+  function getBotStatus(actor,summary=false){history.cleanupBotHistory();requireAdmin(actor);if(actor.role!=='super_admin')return {runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},events:[],logs:[],outcomes:[]};return {outcomes:(summary?[]:db.prepare('SELECT * FROM bot_acceptance_results').all()).map(r=>({...r,payload:JSON.parse(r.payload)})),serverVersion:'0.16.0',runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},logs:(summary?[]:db.prepare('SELECT * FROM bot_logs ORDER BY id DESC LIMIT 100').all()).map(row=>({...row,payload:JSON.parse(row.payload)})),events:(summary?[]:db.prepare('SELECT id,kind,payload,created_at FROM bot_events ORDER BY id DESC LIMIT 1000').all()).map(row=>({...row,payload:JSON.parse(row.payload)}))};}
   function recordBotCandidates(candidates,snapshot=null){return transaction(()=>{
     const old=new Map(db.prepare('SELECT * FROM bot_observations').all().map(row=>[row.id,row]));
     db.exec('UPDATE bot_observations SET active=0');
     let events=0,snapshotId=null;
-    for(const row of candidates){const payload=JSON.stringify(row),hash=createHash('sha256').update(payload).digest('hex'),previous=old.get(row.id);if(!previous||!previous.active||previous.fingerprint!==hash){if(snapshot&&!snapshotId)snapshotId=Number(db.prepare('INSERT INTO bot_snapshots(payload) VALUES(?)').run(JSON.stringify(snapshot)).lastInsertRowid);const eventPayload={...row,...(snapshotId?{snapshotId}:{})};db.prepare('INSERT INTO bot_events(kind,payload,created_at) VALUES(?,?,?)').run(previous?.active?'candidate_updated':'candidate_found',JSON.stringify(eventPayload),new Date().toISOString());recordBotLog('curl_preview',eventPayload);if(snapshotId)recordBotLog('snapshot_saved',{id:row.id,routeId:row.routeId,snapshotId});events++;}db.prepare('INSERT INTO bot_observations VALUES(?,?,1,?) ON CONFLICT(id) DO UPDATE SET fingerprint=excluded.fingerprint,active=1,payload=excluded.payload').run(row.id,hash,payload);}
-    db.exec('DELETE FROM bot_events WHERE id NOT IN (SELECT id FROM bot_events ORDER BY id DESC LIMIT 1000)');db.exec("DELETE FROM bot_snapshots WHERE id NOT IN (SELECT json_extract(payload,'$.snapshotId') FROM bot_events WHERE json_extract(payload,'$.snapshotId') IS NOT NULL)");return events;
+    for(const row of candidates){const payload=JSON.stringify(row),hash=createHash('sha256').update(payload).digest('hex'),previous=old.get(row.id);if(!previous||!previous.active||previous.fingerprint!==hash){if(snapshot&&!snapshotId)snapshotId=Number(db.prepare('INSERT INTO bot_snapshots(payload,created_at) VALUES(?,?)').run(JSON.stringify(snapshot),new Date().toISOString()).lastInsertRowid);const eventPayload={...row,...(snapshotId?{snapshotId}:{})};db.prepare('INSERT INTO bot_events(kind,payload,created_at) VALUES(?,?,?)').run(previous?.active?'candidate_updated':'candidate_found',JSON.stringify(eventPayload),new Date().toISOString());recordBotLog('curl_preview',eventPayload);if(snapshotId)recordBotLog('snapshot_saved',{id:row.id,routeId:row.routeId,snapshotId});events++;}db.prepare('INSERT INTO bot_observations VALUES(?,?,1,?) ON CONFLICT(id) DO UPDATE SET fingerprint=excluded.fingerprint,active=1,payload=excluded.payload').run(row.id,hash,payload);}
+    history.cleanupBotHistory();return events;
   });}
   function recordBotLog(kind,payload){
     const at=new Date().toISOString();
     db.prepare('INSERT INTO bot_logs(kind,payload,created_at) VALUES(?,?,?)').run(kind,JSON.stringify(payload),at);
-    db.exec('DELETE FROM bot_logs WHERE id NOT IN (SELECT id FROM bot_logs ORDER BY id DESC LIMIT 2000)');
+    history.cleanupBotHistory();
     console.log(JSON.stringify({at,type:kind,...payload}));
   }
   function getBotSnapshot(id,actor){if(actor?.role!=='super_admin')fail(403,'Ответы WB доступны только администратору.');const row=db.prepare('SELECT payload FROM bot_snapshots WHERE id=?').get(id);if(!row)fail(404,'Снимок ответа не найден.');return JSON.parse(row.payload);}
@@ -106,6 +108,6 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
     return transaction(()=>{const event=db.prepare('SELECT payload FROM bot_events WHERE id=?').get(id);if(!event)fail(404,'Запись не найдена.');const payload=JSON.parse(event.payload);db.prepare('DELETE FROM bot_events WHERE id=?').run(id);db.prepare('UPDATE bot_observations SET active=0 WHERE id=?').run(payload.id);audit(actor.id,'bot_event_deleted',null,'Запись '+id+', заявка WB '+payload.id+'; история попыток сохранена.');return {ok:true,requestId:payload.id};});
   }
   const acceptanceStore=createAcceptanceStore({db,transaction,botConfig,recordAcceptanceResult,audit,fail});
-  return {...acceptanceStore,deleteBotEvent,createTestAlert,userAlerts,acknowledgeAlert,recordAcceptanceResult,getBotSnapshot,recordBotLog,getBotSettings,saveBotSettings,botConfig,stopBot,setBotRuntime,getBotStatus,recordBotCandidates};
+  return {...history,...acceptanceStore,deleteBotEvent,createTestAlert,userAlerts,acknowledgeAlert,recordAcceptanceResult,getBotSnapshot,recordBotLog,getBotSettings,saveBotSettings,botConfig,stopBot,setBotRuntime,getBotStatus,recordBotCandidates};
 }
 

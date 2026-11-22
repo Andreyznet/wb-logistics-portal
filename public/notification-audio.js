@@ -1,6 +1,13 @@
 class NotificationAudioPlayer {
  constructor(){this.context=null;this.buffers=new Map();this.source=null;this.gain=null;this.generation=0;this.loading=false;}
  async unlock(){if(!this.context||this.context.state==='closed')this.context=new (window.AudioContext||window.webkitAudioContext)();await this.context.resume();}
+ prime(){
+  const resumed=this.unlock();
+  // A one-frame zero buffer warms up the audio path during the login gesture.
+  // It is silent and is never a test alarm or an acknowledgement of a real alert.
+  try{const source=this.context.createBufferSource();source.buffer=this.context.createBuffer(1,1,22050);source.connect(this.context.destination);source.onended=()=>source.disconnect();source.start();}catch{}
+  return resumed;
+ }
  get ready(){return this.context?.state==='running';}
  stop(){this.generation++;this.loading=false;const source=this.source;this.source=null;try{source?.stop();}catch{}source?.disconnect();this.gain?.disconnect();this.gain=null;}
  async play(url,volume,{loop=false}={}){

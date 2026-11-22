@@ -48,7 +48,7 @@ async function api(path,{method='GET',data,headers={},signal}={}){
   return result;
 }
 async function boot(){
-  try{state.session=await api('/api/session');state.user=state.session.user;if(state.session.serverVersion!=='0.17.1')throw new Error('Версии страницы и сервера различаются. Обновите папку src и перезапустите сервер портала.');if(!state.user)return renderAuth();await load();render();}
+  try{state.session=await api('/api/session');state.user=state.session.user;if(state.session.serverVersion!=='0.17.2')throw new Error('Версии страницы и сервера различаются. Обновите папку src и перезапустите сервер портала.');if(!state.user)return renderAuth();await load();render();}
   catch(error){app.innerHTML=`<main class="boot-error-screen"><section class="boot-error-card" aria-labelledby="boot-error-title"><div class="boot-error-icon" aria-hidden="true">${icon('info')}</div><h1 id="boot-error-title">Не удалось загрузить кабинет</h1><p>${esc(error.message)}</p><div class="boot-error-actions"><button class="primary" id="retry">Повторить</button><button class="secondary" id="error-logout">Выйти из аккаунта</button></div></section></main>`;document.querySelector('#retry').onclick=boot;document.querySelector('#error-logout').onclick=async()=>{try{await api('/api/logout',{method:'POST',data:{}});state.user=null;state.view='dashboard';state.bot=null;await boot();}catch(e){toast(e.message,'error');}};}
 }
 async function load(){
@@ -65,8 +65,8 @@ function renderAuth(){
   const eyeBtn=document.querySelector('#show-auth-password');
   if(eyeBtn)eyeBtn.onclick=()=>{const input=document.querySelector('#password'),visible=input.type==='password';input.type=visible?'text':'password';eyeBtn.innerHTML=eyeIcon(visible);eyeBtn.setAttribute('aria-label',visible?'Скрыть пароль':'Показать пароль');eyeBtn.setAttribute('aria-pressed',String(visible));};
   const demoBtn=document.querySelector('#demo-login');
-  if(demoBtn)demoBtn.onclick=async()=>{demoBtn.disabled=true;try{await api('/api/login',{method:'POST',data:{username:'admin',password:'logist2026demo'}});await boot();}catch(error){document.querySelector('.form-error').textContent=error.message;demoBtn.disabled=false;}};
-  document.querySelector('#auth-form').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget;const button=form.querySelector('[type=submit]');button.disabled=true;form.querySelector('.form-error').textContent='';try{const data=Object.fromEntries(new FormData(form));await api(setup?'/api/setup':'/api/login',{method:'POST',data,headers:setup&&data.setupToken?{'X-Setup-Token':data.setupToken}:{}});await boot();}catch(error){form.querySelector('.form-error').textContent=error.message;}finally{button.disabled=false;}};
+  if(demoBtn)demoBtn.onclick=async()=>{void unlockAlarmAudio({prime:true});demoBtn.disabled=true;try{await api('/api/login',{method:'POST',data:{username:'admin',password:'logist2026demo'}});await boot();}catch(error){document.querySelector('.form-error').textContent=error.message;demoBtn.disabled=false;}};
+  document.querySelector('#auth-form').onsubmit=async event=>{void unlockAlarmAudio({prime:true});event.preventDefault();const form=event.currentTarget;const button=form.querySelector('[type=submit]');button.disabled=true;form.querySelector('.form-error').textContent='';try{const data=Object.fromEntries(new FormData(form));await api(setup?'/api/setup':'/api/login',{method:'POST',data,headers:setup&&data.setupToken?{'X-Setup-Token':data.setupToken}:{}});await boot();}catch(error){form.querySelector('.form-error').textContent=error.message;}finally{button.disabled=false;}};
 }
 function navItem(view,title,name){const short={dashboard:'Обзор',requests:'Заявки',catalog:'Справочники',activity:'История',users:'Команда',bot:'Бот'};return `<button data-view="${view}" aria-label="${title}" ${state.view===view?'aria-current="page"':''} class="${state.view===view?'active':''}">${icon(name)}<span class="nav-title">${title}</span><span class="nav-short">${short[view]}</span></button>`;}
 function render(){
@@ -313,9 +313,9 @@ const alarmOscillators=new Set();
 const acceptanceAudioPlayer=new NotificationAudioPlayer();let alarmFileFailed=false;
 const alarmSoundFiles={'digital-alarm':'digital-alarm.ogg','pulse-alarm':'pulse-alarm.ogg','urgent-alarm':'urgent-alarm.ogg','buzzer-alarm':'buzzer-alarm.ogg','classic-alarm':'classic-alarm.ogg','police-siren':'police-siren.wav'};
 function updateAlarmSoundNotice(){const notice=document.querySelector('#alert-sound-notice');if(notice)notice.hidden=alarmAudio?.state==='running';}
-async function unlockAlarmAudio(){
+async function unlockAlarmAudio({prime=false}={}){
  try{
-  const previous=alarmAudio,pending=acceptanceAudioPlayer.unlock();alarmAudio=acceptanceAudioPlayer.context;
+  const previous=alarmAudio,pending=prime?acceptanceAudioPlayer.prime():acceptanceAudioPlayer.unlock();alarmAudio=acceptanceAudioPlayer.context;
   if(alarmAudio&&alarmAudio!==previous)alarmAudio.onstatechange=()=>{updateAlarmSoundNotice();if(alarmAudio.state==='running'&&activeAcceptanceAlert)ringAcceptanceAlarm();};
   updateAlarmSoundNotice();
   await pending;updateAlarmSoundNotice();if(activeAcceptanceAlert&&alarmAudio?.state==='running')ringAcceptanceAlarm();

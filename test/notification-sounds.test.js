@@ -48,3 +48,13 @@ test('touch/click activation retries after blocked pointerdown and resumes the a
  listeners.click();await new Promise(setImmediate);assert.equal(plays.length,1);
  vm.runInContext("alarmAudio.state='suspended';acceptanceAudioPlayer.source=null",context);listeners.click();await new Promise(setImmediate);assert.equal(plays.length,2);
 });
+
+test('login primes audio synchronously before authentication and never waits for browser permission',async()=>{
+ const source=await readFile(new URL('../public/app.js',import.meta.url),'utf8');const begin=source.indexOf("document.querySelector('#auth-form').onsubmit=");const end=source.indexOf('\n}',begin);const handler=source.slice(begin,end),calls=[],error={textContent:''},button={disabled:false},form={querySelector:selector=>selector==='[type=submit]'?button:error};
+ const context=vm.createContext({document:{querySelector:()=>form},unlockAlarmAudio:options=>{assert.equal(options.prime,true);calls.push('prime');return new Promise(()=>{});},api:async()=>{calls.push('login');},boot:async()=>{calls.push('boot');},setup:false,FormData:function(){return [['username','logist'],['password','test-password']];}});
+ vm.runInContext(handler,context);await form.onsubmit({preventDefault:()=>{},currentTarget:form});assert.deepEqual(calls,['prime','login','boot']);assert.equal(button.disabled,false);
+});
+test('audio priming starts only a silent one-frame buffer during the gesture',async()=>{
+ const calls=[],context={state:'suspended',destination:{},resume:()=>{calls.push('resume');return Promise.resolve();},createBuffer:(channels,frames,rate)=>{assert.equal(channels,1);assert.equal(frames,1);return {silent:true};},createBufferSource:()=>({connect:()=>calls.push('connect'),disconnect(){},start(){assert.equal(this.buffer.silent,true);calls.push('start');}})};
+ const scope=vm.createContext({window:{AudioContext:function(){return context;}}});const source=await readFile(new URL('../public/notification-audio.js',import.meta.url),'utf8');vm.runInContext(source+';globalThis.player=new NotificationAudioPlayer();',scope);const pending=vm.runInContext('player.prime()',scope);assert.deepEqual(calls,['resume','connect','start']);await pending;
+});

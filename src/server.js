@@ -165,6 +165,10 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         fail(404,'Раздел не найден или недостаточно прав.');
       }
       if (req.method !== 'GET') fail(404,'Страница не найдена.');
+      if(url.pathname==='/downloads/marshrut.apk'){
+        if(!browserUser)fail(401,'Войдите в портал.');
+        if(browserUser.role!=='super_admin')fail(403,'Скачивание приложения доступно только администратору.');
+      }
       const files = { '/':'index.html','/paged-list.js':'paged-list.js','/overview.js':'overview.js','/knowledge.js':'knowledge.js','/mobile-history.js':'mobile-history.js','/help/token-authorization.png':'help/token-authorization.png','/downloads/marshrut.apk':'downloads/marshrut.apk','/notification-audio.js':'notification-audio.js','/app.js':'app.js','/styles.css':'styles.css','/design.css':'design.css','/vendor/tabulator/tabulator.min.js':'vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css':'vendor/tabulator/tabulator.min.css','/favicon.svg':'favicon.svg' };
       const preset=/^\/avatars\/(cat|frog|robot|bear|owl)\.svg$/.test(url.pathname);
       const sound=notificationSounds.some(s=>s.url===url.pathname);

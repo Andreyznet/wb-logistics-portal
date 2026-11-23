@@ -1,4 +1,6 @@
 // Observe real requests only; never probe or retry a mutating endpoint.
+export const catalogEndpoint=endpoint=>/\/(routecar\/v1\/routecars|suppliers\/transport|user-partnerships\/drivers\/list)(?:$|\?)/.test(endpoint);
+export const apiIncident=issue=>issue.confirmed===true||(issue.confirmed===undefined&&(!catalogEndpoint(issue.endpoint)||[401,403].includes(issue.httpStatus)));
 export function monitoredFetch(store, fetchImpl = fetch) {
   return async (url, options = {}) => {
     const method = options.method || 'GET';

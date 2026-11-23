@@ -1,6 +1,7 @@
 import { randomBytes, createCipheriv, createDecipheriv, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import {createBotHistory} from './bot-history.js';
+import {catalogEndpoint,apiIncident} from './api-monitor.js';
 import { createAcceptanceStore } from './acceptance-store.js';
 import { join, dirname } from 'node:path';
 
@@ -85,10 +86,13 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
     if(httpStatus===200){
       if(!previous)return;
       delete issues[endpoint];
-      recordBotLog('api_recovered',{endpoint,method,httpStatus,message,failedSince:previous.firstSeenAt});
+      recordBotLog('api_recovered',{endpoint,method,httpStatus,message,failedSince:previous.firstSeenAt,notify:apiIncident(previous)});
     }else{
-      issues[endpoint]={endpoint,method,httpStatus,message,firstSeenAt:previous?.firstSeenAt||at,lastSeenAt:at,count:(previous?.count||0)+1};
-      recordBotLog('api_error',{endpoint,method,httpStatus,message,count:issues[endpoint].count});
+      const ongoing=previous&&Date.parse(at)-Date.parse(previous.lastSeenAt)<120000;
+      const count=ongoing?previous.count+1:1,firstSeenAt=ongoing?previous.firstSeenAt:at;
+      const confirmed=!catalogEndpoint(endpoint)||[401,403].includes(httpStatus)||Boolean(previous&&apiIncident(previous))||(count>=3&&Date.parse(at)-Date.parse(firstSeenAt)>=30000);
+      issues[endpoint]={endpoint,method,httpStatus,message,firstSeenAt,lastSeenAt:at,count,confirmed};
+      recordBotLog('api_error',{endpoint,method,httpStatus,message,count,notify:confirmed&&(!previous||!apiIncident(previous)||previous.httpStatus!==httpStatus)});
     }
     setBotRuntime({apiIssues:issues});
   }

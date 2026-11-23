@@ -17,7 +17,7 @@ test('Android feed keeps durable state changes, isolates alerts, strips technica
   seedPreviewDemo(store);const users=store.users(),admin=users.find(u=>u.role==='super_admin'),logist=users.find(u=>u.role==='logist');
   const initial=mobileSync(store,logist,{});assert.equal(initial.events.length,0);
   store.recordBotLog('bot_enabled',{message:'Бот запущен.'});
-  store.recordBotLog('api_error',{message:'private-endpoint-marker'});
+  store.recordBotLog('api_error',{message:'private-endpoint-marker',notify:true});
   store.recordBotLog('bot_disabled',{message:'Бот остановлен.'});
   const own=store.db.prepare('INSERT INTO acceptance_alerts(user_id,request_id,payload,created_at) VALUES(?,?,?,?)');
   own.run(admin.id,99999,JSON.stringify({id:'admin-secret'}),new Date().toISOString());own.run(logist.id,88888,JSON.stringify({id:'own-alert'}),new Date().toISOString());

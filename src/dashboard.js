@@ -1,8 +1,9 @@
 import {businessDate} from './store.js';
+import {apiIncident} from './api-monitor.js';
 export function dashboard(store,user){
  const admin=['admin','super_admin'].includes(user.role),today=businessDate(store.timeZone),all=store.requests(user),plans=admin?all:all.filter(p=>p.created_by===user.id),active=plans.filter(p=>p.status==='waiting'),ready=active.filter(p=>p.service_date<=today),future=active.filter(p=>p.service_date>today),c=store.botConfig(),runtime=store.getBotStatus({role:'admin'}).runtime||{};
  const alerts=[];
- for(const issue of Object.values(runtime.apiIssues||{}))alerts.push({tone:'error',title:'Ошибка API'+(issue.httpStatus?' · HTTP '+issue.httpStatus:' · нет связи'),text:admin?issue.endpoint+' — '+issue.message:'Сервис получает ошибки от API. Сообщите менеджеру; выполнение заявок может задерживаться.'});
+ for(const issue of Object.values(runtime.apiIssues||{}).filter(apiIncident))alerts.push({tone:'error',title:'Ошибка API'+(issue.httpStatus?' · HTTP '+issue.httpStatus:' · нет связи'),text:admin?issue.message:'Сервис получает ошибки от API. Сообщите менеджеру; выполнение заявок может задерживаться.'});
  if(!c.enabled)alerts.push({tone:'warning',title:'Бот остановлен',text:(ready.length?'Готовы к мониторингу: '+ready.length+'.':'Мониторинг не выполняется; новые заявки не проверяются.')+(admin?' Включите бота, чтобы начать проверку.':' Обратитесь к менеджеру для запуска.')});
  if(runtime.error||c.enabled&&['auth_error','error'].includes(runtime.state))alerts.push({tone:'error',title:'Мониторинг требует внимания',text:admin?(runtime.error||'Проверьте настройки бота.'):'Менеджер проверяет работу мониторинга.'});
  if(runtime.warning)alerts.push({tone:'warning',title:runtime.deniedCards?'Часть карточек недоступна':'Сообщение бота',text:admin?runtime.warning:'Мониторинг продолжается; часть карточек WB недоступна для проверки.'});

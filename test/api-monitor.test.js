@@ -4,6 +4,29 @@ import {monitoredFetch} from '../src/api-monitor.js';
 import {openStore} from '../src/store.js';
 import {dashboard} from '../src/dashboard.js';
 import {seedPreviewDemo} from '../src/server.js';
+import {mobileSync} from '../src/mobile.js';
+import {makeDirectoryApi} from '../src/directory-api.js';
+
+test('transient catalog 503 is retried and journaled without incident or push; sustained errors and authorization failures do notify',async()=>{
+ const store=openStore(':memory:');try{
+  seedPreviewDemo(store);const admin=store.users().find(u=>u.role==='super_admin');
+  const baseline=mobileSync(store,admin,{}).cursor;let calls=0;
+  const api=makeDirectoryApi({logisticsHeaders:{},driveHeaders:{}},monitoredFetch(store,async()=>{calls++;return new Response('{}',{status:calls===1?503:200,headers:{'Content-Type':'application/json'}});}));
+  await api.routecars({data:{query:'61373'}});assert.equal(calls,2);
+  let sync=mobileSync(store,admin,{since:baseline});assert.equal(sync.events.length,0);assert.equal(sync.bot.apiErrors,0);
+  assert.ok(store.getBotStatus(admin).logs.some(e=>e.kind==='api_error'&&e.payload.httpStatus===503));
+  const endpoint='POST https://logistics.wb.ru/router-bff/routecar/v1/routecars';
+  store.recordApiHealth({endpoint,method:'POST',httpStatus:503,message:'temporary'});
+  sync=mobileSync(store,admin,{since:baseline});assert.equal(sync.bot.apiErrors,0);
+  assert.ok(!dashboard(store,admin).alerts.some(a=>a.title==='Ошибка API · HTTP 503'));
+  const issues=store.getBotStatus(admin).runtime.apiIssues;issues[endpoint].firstSeenAt=new Date(Date.now()-35000).toISOString();issues[endpoint].count=2;store.setBotRuntime({apiIssues:issues});
+  store.recordApiHealth({endpoint,method:'POST',httpStatus:503,message:'still unavailable'});
+  sync=mobileSync(store,admin,{since:baseline});assert.equal(sync.bot.apiErrors,1);assert.equal(sync.events.filter(e=>e.kind==='api_error').length,1);
+  const cursor=sync.cursor;store.recordApiHealth({endpoint,method:'POST',httpStatus:503,message:'still unavailable'});assert.equal(mobileSync(store,admin,{since:cursor}).events.length,0);
+  store.recordApiHealth({endpoint,method:'POST',httpStatus:200,message:'restored'});assert.equal(mobileSync(store,admin,{since:cursor}).events[0].kind,'api_recovered');
+  store.recordApiHealth({endpoint,method:'POST',httpStatus:401,message:'authorization denied'});assert.equal(mobileSync(store,admin,{}).bot.apiErrors,1);
+ }finally{store.close();}
+});
 
 test('API failures persist per endpoint, are visible by role, and recover independently',async()=>{
  const store=openStore(':memory:');

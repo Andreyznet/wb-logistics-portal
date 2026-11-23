@@ -54,7 +54,7 @@ export function parseTransport(payload) {
 }
 
 export function makeDirectoryApi({ logisticsHeaders, driveHeaders }, fetchImpl = fetch) {
-  async function request(url, headers, body) {
+  async function request(url, headers, body, attempt=0) {
     let response;
     try {
       response = await fetchImpl(url, {
@@ -63,6 +63,8 @@ export function makeDirectoryApi({ logisticsHeaders, driveHeaders }, fetchImpl =
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
     } catch { throw new ApiError('Directory request failed or timed out; export not completed'); }
+    // These endpoints only read directories/search results, including their POST forms.
+    if([502,503,504].includes(response.status)&&attempt===0){try{await response.body?.cancel();}catch{}await sleep(300);return request(url,headers,body,1);}
     if (!response.ok) throw new ApiError(`Directory API returned HTTP ${response.status}; export stopped`, { status: response.status, stop: true });
     if (!(response.headers.get('content-type') || '').includes('json')) throw new ApiError('Directory API returned non-JSON; export stopped', { stop: true });
     try { return await response.json(); } catch { throw new Error('Directory API returned invalid JSON'); }

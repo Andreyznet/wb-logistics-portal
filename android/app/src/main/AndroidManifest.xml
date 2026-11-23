@@ -13,6 +13,7 @@
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>
         <activity android:name=".AlertActivity" android:exported="false" android:theme="@style/AlertTheme" />
+        <activity android:name=".SetupActivity" android:exported="false" />
         <service android:name=".MonitorService" android:exported="false" android:stopWithTask="false" android:foregroundServiceType="specialUse|mediaPlayback">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled continuous dispatch duty: receive time-critical fleet assignment and incident alerts from a private logistics portal during a working shift." />
         </service>

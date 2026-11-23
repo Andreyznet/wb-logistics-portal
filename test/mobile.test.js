@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {openStore} from '../src/store.js';
 import {createPortal,seedPreviewDemo} from '../src/server.js';
-import {mobileSync,initMobile,connectMobile,mobileDevice,ackMobile} from '../src/mobile.js';
+import {mobileSync,waitMobile,initMobile,connectMobile,mobileDevice,ackMobile} from '../src/mobile.js';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 
@@ -11,6 +11,18 @@ test('portal notifies Android about completed login and logout without sending c
  const context=vm.createContext({state:{user:{id:7}},window:{MarshrutSession:{signedIn:id=>calls.push(id),signedOut:()=>calls.push('out')}}});
  vm.runInContext(source.slice(source.indexOf('function syncAndroidSession()'),source.indexOf('async function boot()')),context);
  vm.runInContext('syncAndroidSession();state.user=null;syncAndroidSession()',context);assert.deepEqual(calls,['7','out']);
+});
+
+test('waiting phone receives a new test alert promptly, and disconnected waits release resources',async()=>{
+ const store=openStore(':memory:');try{
+  seedPreviewDemo(store);initMobile(store);const user=store.users().find(u=>u.role==='super_admin'),pair=connectMobile(store,user,'long-poll-test-phone'),device=mobileDevice(store,'Bearer '+pair.token);
+  const initial=mobileSync(store,user,{},device),started=Date.now(),controller=new AbortController();
+  const pending=waitMobile(store,user,{since:initial.cursor,revision:initial.revision,wait:25},device,controller.signal);
+  const timer=setTimeout(()=>store.createTestAlert(null,user),60);
+  const result=await pending;clearTimeout(timer);assert.equal(result.alerts.length,1);assert.ok(Date.now()-started<2000,'delivery must not wait for the former 15-second polling interval');
+  ackMobile(store,user,device,result.alerts[0].id);const after=mobileSync(store,user,{},device),cancel=new AbortController();
+  const waiting=waitMobile(store,user,{since:after.cursor,revision:after.revision,wait:25},device,cancel.signal);cancel.abort();assert.equal(await waiting,null);
+ }finally{store.close();}
 });
 test('Android feed keeps durable state changes, isolates alerts, strips technical details for logist',()=>{
  const store=openStore(':memory:');try{

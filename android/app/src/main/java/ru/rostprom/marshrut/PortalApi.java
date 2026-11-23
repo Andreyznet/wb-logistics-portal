@@ -7,14 +7,18 @@ import java.nio.charset.StandardCharsets;
 
 final class PortalApi {
     static final String ORIGIN="https://open-key.ru";
+    private static volatile HttpURLConnection waiting;
+    static final class WaitCancelled extends IOException {}
+    static void cancelWait(){HttpURLConnection current=waiting;waiting=null;if(current!=null)new Thread(current::disconnect,"cancel-wait").start();}
     static class ApiException extends IOException { final int status; ApiException(int s){super("HTTP "+s);status=s;} }
     static JSONObject call(String path, boolean post) throws Exception {
         return call(path,post,DeviceAuth.token());
     }
     static JSONObject call(String path, boolean post,String credential) throws Exception {
         HttpURLConnection c=(HttpURLConnection)new URL(ORIGIN+"/portal-api/"+path).openConnection();
+        boolean longWait=path.contains("wait=25");if(longWait)waiting=c;
         try {
-            c.setInstanceFollowRedirects(false);c.setConnectTimeout(12000);c.setReadTimeout(15000);
+            c.setInstanceFollowRedirects(false);c.setConnectTimeout(12000);c.setReadTimeout(longWait?35000:15000);
             c.setRequestProperty("Accept","application/json");
             if(credential.isEmpty())throw new ApiException(401);
             c.setRequestProperty("Authorization","Bearer "+credential);
@@ -25,6 +29,6 @@ final class PortalApi {
                 byte[] buf=new byte[8192];int n;while((n=in.read(buf))!=-1){if(out.size()+n>4*1024*1024)throw new IOException("Слишком большой ответ");out.write(buf,0,n);}
                 return new JSONObject(out.toString("UTF-8"));
             }
-        }finally{c.disconnect();}
+        }catch(IOException e){if(longWait&&waiting!=c)throw new WaitCancelled();throw e;}finally{if(waiting==c)waiting=null;c.disconnect();}
     }
 }

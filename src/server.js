@@ -3,7 +3,7 @@ import {dashboard} from './dashboard.js';
 import { makeDirectoryApi, parseTransport, collectPartnerships, buildDirectory } from './directory-api.js';
 import { monitoredFetch } from './api-monitor.js';
 import { knowledgeFor } from './knowledge.js';
-import { mobileSync,initMobile,connectMobile,mobileDevice,ackMobile } from './mobile.js';
+import { mobileSync,waitMobile,initMobile,connectMobile,mobileDevice,ackMobile } from './mobile.js';
 import { createCatalogPager } from './catalog-pager.js';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -86,7 +86,13 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         if(url.pathname==='/api/mobile/disconnect'&&req.method==='POST'){if(device)store.db.prepare('DELETE FROM mobile_devices WHERE id=?').run(device.id);return json(200,{ok:true});}
         const mobileAck=/^\/api\/mobile\/alerts\/(\d+)\/ack$/.exec(url.pathname);
         if(mobileAck&&req.method==='POST'){if(!device)fail(401,'Подключите телефон заново.');return json(200,ackMobile(store,device.user,device,Number(mobileAck[1])));}
-        if(url.pathname==='/api/mobile/sync'&&req.method==='GET')return json(200,mobileSync(store,user,Object.fromEntries(url.searchParams),device));
+        if(url.pathname==='/api/mobile/sync'&&req.method==='GET'){
+          const query=Object.fromEntries(url.searchParams),controller=new AbortController();res.once('close',()=>controller.abort());
+          const result=await waitMobile(store,user,query,device,controller.signal);if(!result||res.destroyed)return;
+          const current=device?mobileDevice(store,req.headers.authorization):null;
+          if(device&&!current)fail(401,'Подключите телефон заново.');
+          return json(200,current?mobileSync(store,current.user,query,current):result);
+        }
         if(url.pathname==='/api/knowledge'&&req.method==='GET')return json(200,{data:knowledgeFor(user.role)});
         if(url.pathname==='/api/bot/test-alert'&&req.method==='POST'){const input=await body(req);return json(201,store.createTestAlert(input.planId??null,user));}
         if(url.pathname==='/api/me/alerts'&&req.method==='GET')return json(200,{data:store.userAlerts(user)});

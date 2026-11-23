@@ -12,13 +12,10 @@ public final class AlertActivity extends Activity {
             JSONArray queue=new JSONArray(Prefs.get(this).getString("queue","[]"));JSONObject alert=null;
             for(int i=0;i<queue.length();i++)if(queue.getJSONObject(i).getLong("id")==id)alert=queue.getJSONObject(i);
             if(alert==null){finish();return;}JSONObject p=alert.getJSONObject("payload");
-            LinearLayout layout=new LinearLayout(this);layout.setOrientation(LinearLayout.VERTICAL);layout.setPadding(dp(24),dp(16),dp(24),dp(16));
-            TextView title=new TextView(this);title.setText(p.optBoolean("test")?"Тест уведомления":p.optBoolean("observed")?"Найдена заявка":"Заявка взята в работу");title.setTextSize(22);title.setTextColor(0xff10243a);layout.addView(title);
-            TextView details=new TextView(this);details.setTextSize(16);details.setPadding(0,dp(20),0,dp(20));
-            String date=p.optString("carDt","—");try{date=java.time.OffsetDateTime.parse(date).atZoneSameInstant(java.time.ZoneId.of("Asia/Yekaterinburg")).format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));}catch(Exception ignored){}
-            details.setText("Заявка WB: "+p.optString("id")+"\nПлан: №"+p.optString("planId")+"\nМаршрут: "+p.optString("routeId")+" "+p.optString("routeName")+"\nПодача (Екатеринбург): "+date+"\nВодитель: "+p.optString("driver")+"\nАвтомобиль: "+p.optString("vehicle")+(p.isNull("trailer")?"":"\nПрицеп: "+p.optString("trailer"))+"\n\n"+p.optString("message"));layout.addView(details);
-            Button ok=new Button(this);ok.setText("ОК · подтверждаю");layout.addView(ok);ok.setOnClickListener(v->{startService(new Intent(this,MonitorService.class).setAction("ACK").putExtra("id",id));finish();});
-            ScrollView scroll=new ScrollView(this);scroll.addView(layout);setContentView(scroll);
+            setContentView(new AlertCard(this,p,()->{startService(new Intent(this,MonitorService.class).setAction("ACK").putExtra("id",id));finish();}));
+            getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+            android.view.WindowManager.LayoutParams attrs=getWindow().getAttributes();attrs.dimAmount=0.65f;getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND);getWindow().setAttributes(attrs);
+            getWindow().setLayout(Math.min(dp(560),getResources().getDisplayMetrics().widthPixels-dp(32)),android.view.WindowManager.LayoutParams.WRAP_CONTENT);
         }catch(Exception e){finish();}
     }
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}

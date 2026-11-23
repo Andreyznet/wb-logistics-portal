@@ -30,5 +30,18 @@ export function mobileSync(store,user,query,device=null){
  const kinds=['bot_enabled','bot_disabled','poll_failed','api_error','api_recovered'];
  const rows=store.db.prepare('SELECT id,kind,payload,created_at FROM bot_logs WHERE id>? AND kind IN ('+kinds.map(()=>'?').join(',')+') ORDER BY id LIMIT 100').all(since,...kinds);
  const events=rows.flatMap(row=>{const p=JSON.parse(row.payload);if(['api_error','api_recovered'].includes(row.kind)&&p.notify!==true)return [];return [{id:row.id,kind:row.kind,at:row.created_at,message:admin?p.message:row.kind==='bot_enabled'?'Бот запущен.':row.kind==='bot_disabled'?'Бот остановлен.':row.kind==='api_recovered'?'Связь с API восстановлена.':'В работе бота произошла ошибка. Сообщите менеджеру.'}];});
- return {user:{id:user.id,name:user.name,role:user.role},cursor:rows.length===100?rows.at(-1).id:max,hasMore:rows.length===100,bot:{enabled:store.botConfig().enabled,error:runtime.error?(admin?runtime.error:'Ошибка работы бота. Сообщите менеджеру.'):null,apiErrors:Object.values(runtime.apiIssues||{}).filter(apiIncident).length},events,alerts:device?mobileAlerts(store,user,device):store.userAlerts(user),notification:store.notificationSettings(user.id)};
+ const bot={enabled:store.botConfig().enabled,error:runtime.error?(admin?runtime.error:'Ошибка работы бота. Сообщите менеджеру.'):null,apiErrors:Object.values(runtime.apiIssues||{}).filter(apiIncident).length};
+ const alerts=device?mobileAlerts(store,user,device):store.userAlerts(user),notification=store.notificationSettings(user.id);
+ const revision=hash(JSON.stringify({bot,alerts:alerts.map(a=>a.id),notification}));
+ return {user:{id:user.id,name:user.name,role:user.role},cursor:rows.length===100?rows.at(-1).id:max,hasMore:rows.length===100,revision,bot,events,alerts,notification};
+}
+export async function waitMobile(store,user,query,device,signal){
+ const seconds=Number(query.wait||0);if(!Number.isInteger(seconds)||seconds<0||seconds>25){const e=new Error('Некорректное ожидание.');e.status=400;throw e;}
+ const until=Date.now()+seconds*1000;
+ while(!signal.aborted){
+  const result=mobileSync(store,user,query,device);
+  if(!seconds||!query.revision||result.revision!==query.revision||result.events.length||result.hasMore||Date.now()>=until)return result;
+  await new Promise(resolve=>{const done=()=>{clearTimeout(timer);signal.removeEventListener('abort',done);resolve();};const timer=setTimeout(done,200);signal.addEventListener('abort',done,{once:true});});
+ }
+ return null;
 }

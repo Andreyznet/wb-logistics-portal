@@ -12,7 +12,7 @@ import java.util.concurrent.*;
 public final class MonitorService extends Service {
     static final String CH_SERVICE="duty",CH_ALERT="assignments",CH_EVENTS="bot_events",UPDATE="ru.rostprom.marshrut.UPDATE";
     private ScheduledExecutorService executor;private NotificationManager notifications;private PowerManager.WakeLock wakeLock;
-    private final AlarmPlayer alarm=new AlarmPlayer();private volatile boolean stopped=false;private int networkFailures=0;
+    private final AlarmPlayer alarm=new AlarmPlayer();private volatile boolean stopped=false;private int networkFailures=0;private volatile long retryAt=0;
     private final Set<Integer> shown=ConcurrentHashMap.newKeySet();private boolean scheduled=false;private final Object ackLock=new Object();
     @Override public void onCreate(){
         super.onCreate();DeviceAuth.init(this);notifications=getSystemService(NotificationManager.class);
@@ -35,13 +35,13 @@ public final class MonitorService extends Service {
         if(Build.VERSION.SDK_INT>=34)startForeground(1,duty("Подключаемся к порталу…"),ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);else startForeground(1,duty("Подключаемся к порталу…"));
         Prefs.get(this).edit().putBoolean("running",true).apply();
         if(intent!=null&&"ACK".equals(intent.getAction())){
-            long id=intent.getLongExtra("id",0);alarm.stop();notifications.cancel(alertId(id));
+            long id=intent.getLongExtra("id",0);PortalApi.cancelWait();retryAt=0;alarm.stop();notifications.cancel(alertId(id));
             synchronized(ackLock){Set<String> acks=new HashSet<>(Prefs.get(this).getStringSet("acks",Collections.emptySet()));acks.add(Long.toString(id));Prefs.get(this).edit().putStringSet("acks",acks).apply();}
             executor.execute(this::sync);
-        }else if(intent!=null&&"REFRESH".equals(intent.getAction()))executor.execute(this::sync);
+        }else if(intent!=null&&"REFRESH".equals(intent.getAction())){PortalApi.cancelWait();retryAt=0;executor.execute(this::sync);}
         if(!scheduled){
             scheduled=true;
-            Prefs.get(this).edit().putBoolean("running",true).apply();executor.scheduleWithFixedDelay(this::sync,0,15,TimeUnit.SECONDS);
+            Prefs.get(this).edit().putBoolean("running",true).apply();executor.scheduleWithFixedDelay(this::sync,0,1,TimeUnit.SECONDS);
         }
         return START_STICKY;
     }
@@ -55,7 +55,7 @@ public final class MonitorService extends Service {
     }
     private int alertId(long id){return 1000+(int)(id%100000);}
     private synchronized void sync(){
-        if(stopped)return;
+        if(stopped||System.currentTimeMillis()<retryAt)return;
         if(!notifications.areNotificationsEnabled()){stopSelf();return;}
         String credential=DeviceAuth.token();
         if(credential.isEmpty()){failure("Подключите телефон: откройте приложение и войдите в кабинет.");stopSelf();return;}
@@ -64,7 +64,10 @@ public final class MonitorService extends Service {
             Prefs.get(this).edit().putLong("lastAttempt",System.currentTimeMillis()).apply();
             String cursor=Prefs.get(this).getString("cursor","");
             String session=DeviceAuth.token();
-            JSONObject data=PortalApi.call("mobile/sync"+(cursor.isEmpty()?"":"?since="+cursor),false,credential);
+            String revision=Prefs.get(this).getString("revision","");
+            String query=cursor.isEmpty()?"":"?since="+cursor;
+            if(!revision.isEmpty()&&Prefs.get(this).getStringSet("acks",Collections.emptySet()).isEmpty())query+=(query.isEmpty()?"?":"&")+"wait=25&revision="+revision;
+            JSONObject data=PortalApi.call("mobile/sync"+query,false,credential);
             if(stopped||!java.util.Objects.equals(session,DeviceAuth.token()))return;
             long user=data.getJSONObject("user").getLong("id");
             long previous=Prefs.get(this).getLong("user",0);
@@ -95,7 +98,7 @@ public final class MonitorService extends Service {
                 }
             }
             for(int old:shown)if(!current.contains(old))notifications.cancel(old);shown.clear();shown.addAll(current);
-            Prefs.get(this).edit().putString("queue",queue.toString()).putString("cursor",Long.toString(data.getLong("cursor"))).putString("bot",status).putLong("lastSync",System.currentTimeMillis()).remove("connectionError").apply();
+            Prefs.get(this).edit().putString("queue",queue.toString()).putString("revision",data.optString("revision","")).putString("cursor",Long.toString(data.getLong("cursor"))).putString("bot",status).putLong("lastSync",System.currentTimeMillis()).remove("connectionError").apply();
             JSONObject settings=data.getJSONObject("notification");
             if(stopped)return;
             if(queue.length()>0&&notifications.getNotificationChannel(CH_ALERT).getImportance()!=NotificationManager.IMPORTANCE_NONE){
@@ -103,18 +106,18 @@ public final class MonitorService extends Service {
                 JSONObject first=queue.getJSONObject(0);alarm.play(this,Long.toString(first.getLong("id")),settings.optString("soundId","pulse-alarm"),settings.optInt("volume",100));
             }else{alarm.stop();if(Build.VERSION.SDK_INT>=34)startForeground(1,duty(status),ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);}
             notifications.notify(1,duty(status));
-            if(networkFailures>=2)event(99996,"api_recovered","Связь приложения с порталом восстановлена.");networkFailures=0;
+            if(networkFailures>=2)event(99996,"api_recovered","Связь приложения с порталом восстановлена.");networkFailures=0;retryAt=0;
             sendBroadcast(new Intent(UPDATE).setPackage(getPackageName()));
-        }catch(PortalApi.ApiException e){
+        }catch(PortalApi.WaitCancelled ignored){return;}catch(PortalApi.ApiException e){
             if(stopped)return;
             if(e.status==401){alarm.stop();notifications.cancelAll();if(credential.equals(DeviceAuth.token())){DeviceAuth.clear();Prefs.clearAccount(this);}event(99997,"session","Сеанс завершён. Откройте приложение и войдите снова.");stopSelf();}
             else failure("Портал вернул HTTP "+e.status+". Проверьте обновление сервера.");
         }catch(Exception e){failure(e instanceof java.io.IOException?"Нет связи с порталом. Проверьте интернет.":"Ошибка приложения: "+e.getClass().getSimpleName()+". Обновите приложение и сервер.");}
     }
-    private void failure(String message){if(stopped)return;networkFailures++;Prefs.get(this).edit().putString("connectionError",message).apply();sendBroadcast(new Intent(UPDATE).setPackage(getPackageName()));notifications.notify(1,duty(message));if(networkFailures>=2)event(99995,"network",message);}
+    private void failure(String message){if(stopped)return;networkFailures++;retryAt=System.currentTimeMillis()+Math.min(60000,1000L*(1L<<Math.min(networkFailures,6)));Prefs.get(this).edit().putString("connectionError",message).apply();sendBroadcast(new Intent(UPDATE).setPackage(getPackageName()));notifications.notify(1,duty(message));if(networkFailures>=2)event(99995,"network",message);}
     private final android.net.ConnectivityManager.NetworkCallback networkChanges=new android.net.ConnectivityManager.NetworkCallback(){
-        @Override public void onAvailable(android.net.Network network){if(executor!=null&&!executor.isShutdown()&&scheduled)executor.execute(MonitorService.this::sync);}
+        @Override public void onAvailable(android.net.Network network){if(executor!=null&&!executor.isShutdown()&&scheduled){retryAt=0;PortalApi.cancelWait();executor.execute(MonitorService.this::sync);}}
     };
-    @Override public void onDestroy(){try{((android.net.ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE)).unregisterNetworkCallback(networkChanges);}catch(Exception ignored){}stopped=true;Prefs.get(this).edit().putBoolean("running",false).apply();if(executor!=null)executor.shutdownNow();alarm.stop();if(wakeLock!=null&&wakeLock.isHeld())wakeLock.release();for(int id:shown)notifications.cancel(id);stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
+    @Override public void onDestroy(){stopped=true;PortalApi.cancelWait();try{((android.net.ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE)).unregisterNetworkCallback(networkChanges);}catch(Exception ignored){}stopped=true;Prefs.get(this).edit().putBoolean("running",false).apply();if(executor!=null)executor.shutdownNow();alarm.stop();if(wakeLock!=null&&wakeLock.isHeld())wakeLock.release();for(int id:shown)notifications.cancel(id);stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
     @Override public android.os.IBinder onBind(Intent intent){return null;}
 }

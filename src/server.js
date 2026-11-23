@@ -150,13 +150,13 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         fail(404,'Раздел не найден или недостаточно прав.');
       }
       if (req.method !== 'GET') fail(404,'Страница не найдена.');
-      const files = { '/':'index.html','/paged-list.js':'paged-list.js','/overview.js':'overview.js','/knowledge.js':'knowledge.js','/help/token-authorization.png':'help/token-authorization.png','/notification-audio.js':'notification-audio.js','/app.js':'app.js','/styles.css':'styles.css','/design.css':'design.css','/vendor/tabulator/tabulator.min.js':'vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css':'vendor/tabulator/tabulator.min.css','/favicon.svg':'favicon.svg' };
+      const files = { '/':'index.html','/paged-list.js':'paged-list.js','/overview.js':'overview.js','/knowledge.js':'knowledge.js','/help/token-authorization.png':'help/token-authorization.png','/downloads/marshrut.apk':'downloads/marshrut.apk','/notification-audio.js':'notification-audio.js','/app.js':'app.js','/styles.css':'styles.css','/design.css':'design.css','/vendor/tabulator/tabulator.min.js':'vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css':'vendor/tabulator/tabulator.min.css','/favicon.svg':'favicon.svg' };
       const preset=/^\/avatars\/(cat|frog|robot|bear|owl)\.svg$/.test(url.pathname);
       const sound=notificationSounds.some(s=>s.url===url.pathname);
       const file = sound||preset?url.pathname.slice(1):files[url.pathname];
       if (!file) fail(404,'Страница не найдена.');
-      const mime = file.endsWith('.png')?'image/png':file.endsWith('.ogg')?'audio/ogg':file.endsWith('.wav')?'audio/wav':file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html';
-      res.writeHead(200,{...headers,'Content-Type':mime.startsWith('audio/')||mime==='image/png'?mime:`${mime}; charset=utf-8`}); res.end(await readFile(resolve(publicDir,file)));
+      const mime = file.endsWith('.apk')?'application/vnd.android.package-archive':file.endsWith('.png')?'image/png':file.endsWith('.ogg')?'audio/ogg':file.endsWith('.wav')?'audio/wav':file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html';
+      res.writeHead(200,{...headers,...(file.endsWith('.apk')?{'Content-Disposition':'attachment; filename="marshrut.apk"'}:{}),'Content-Type':mime.startsWith('audio/')||mime==='image/png'||file.endsWith('.apk')?mime:`${mime}; charset=utf-8`}); res.end(await readFile(resolve(publicDir,file)));
     } catch (error) {
       if (!(error instanceof AppError)) console.error('Portal request failed:', error.code || error.name);
       if (!res.headersSent) json(error.status || 500,{error:error instanceof AppError ? error.message : 'Не удалось выполнить операцию. Повторите попытку.'});

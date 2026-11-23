@@ -2299,7 +2299,8 @@ dialog::backdrop {
 #avatar-form .dialog-buttons{display:grid;grid-template-columns:minmax(0,1fr)}
 #avatar-save{width:100%;min-width:0;box-sizing:border-box;justify-content:center}
 #avatar-dialog .notification-sound-settings{border:0;margin:0}
-.profile-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 20px;border-top:1px solid var(--line)}
+.profile-footer{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:12px 20px;border-top:1px solid var(--line)}
+.profile-download{display:inline-flex;gap:6px;align-items:center;font-size:12px;padding:8px 10px;text-decoration:none}.profile-download svg{width:16px;height:16px}
 .profile-footer>span{font-size:12px;color:var(--muted);min-width:0;overflow-wrap:anywhere}
 .profile-logout{display:inline-flex;gap:6px;align-items:center;flex:none;font-size:12px;padding:8px 10px}.profile-logout svg{width:16px;height:16px}
 @media(max-width:800px){.topbar-right{width:100%;min-width:0;display:flex;gap:12px}.topbar-right #header-bot{margin-right:auto;min-width:0}.topbar-right .topbar-icon-btn,.topbar-right .userbox{flex:none}.topbar-right .userbox{margin-left:0}.topbar{width:100%;box-sizing:border-box}}

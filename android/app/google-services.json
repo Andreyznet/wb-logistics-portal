@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "341157751935",
+    "project_id": "the-route-b9b20",
+    "storage_bucket": "the-route-b9b20.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:341157751935:android:796f5a363b406573a4e34a",
+        "android_client_info": {
+          "package_name": "ru.rostprom.marshrut"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBHjNcvx861HOlN-VE7E-wiWvuc-kf_kmk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

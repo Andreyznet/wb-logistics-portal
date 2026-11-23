@@ -15,6 +15,10 @@ final class PortalApi {
         return call(path,post,DeviceAuth.token());
     }
     static JSONObject call(String path, boolean post,String credential) throws Exception {
+        return request(path,post,credential,null);
+    }
+    static JSONObject post(String path,JSONObject body) throws Exception {return request(path,true,DeviceAuth.token(),body);}
+    private static JSONObject request(String path,boolean post,String credential,JSONObject body) throws Exception {
         HttpURLConnection c=(HttpURLConnection)new URL(ORIGIN+"/portal-api/"+path).openConnection();
         boolean longWait=path.contains("wait=25");if(longWait)waiting=c;
         try {
@@ -22,7 +26,7 @@ final class PortalApi {
             c.setRequestProperty("Accept","application/json");
             if(credential.isEmpty())throw new ApiException(401);
             c.setRequestProperty("Authorization","Bearer "+credential);
-            if(post){c.setRequestMethod("POST");c.setRequestProperty("Origin",ORIGIN);c.setRequestProperty("Content-Type","application/json");c.setDoOutput(true);try(OutputStream out=c.getOutputStream()){out.write("{}".getBytes(StandardCharsets.UTF_8));}}
+            if(post){c.setRequestMethod("POST");c.setRequestProperty("Origin",ORIGIN);c.setRequestProperty("Content-Type","application/json");c.setDoOutput(true);try(OutputStream out=c.getOutputStream()){out.write((body==null?"{}":body.toString()).getBytes(StandardCharsets.UTF_8));}}
             int status=c.getResponseCode();if(status!=200)throw new ApiException(status);
             String type=c.getContentType();if(type==null||!type.contains("application/json"))throw new IOException("Сервер вернул не JSON");
             try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){

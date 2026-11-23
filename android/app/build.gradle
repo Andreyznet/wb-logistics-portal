@@ -1,8 +1,11 @@
-plugins { id 'com.android.application' }
+plugins { id 'com.android.application'; id 'com.google.gms.google-services' }
 android {
     namespace 'ru.rostprom.marshrut'
     compileSdk 35
-    defaultConfig { applicationId 'ru.rostprom.marshrut'; minSdk 26; targetSdk 35; versionCode 3; versionName '1.0.2' }
+    defaultConfig { applicationId 'ru.rostprom.marshrut'; minSdk 26; targetSdk 35; versionCode 4; versionName '1.1.0' }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
-    buildTypes { release { minifyEnabled false } }
+    signingConfigs { local { storeFile file(providers.gradleProperty('signingStore').getOrElse('../.local-signing/debug.jks')); storePassword 'android'; keyAlias 'androiddebugkey'; keyPassword 'android' } }
+    buildTypes { debug { signingConfig signingConfigs.local }; release { minifyEnabled false; signingConfig signingConfigs.local } }
 }
+
+dependencies { implementation platform('com.google.firebase:firebase-bom:35.2.0'); implementation 'com.google.firebase:firebase-messaging' }

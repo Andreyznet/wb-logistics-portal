@@ -13,4 +13,6 @@ data/
 *.db
 *.key
 auth.json
+*firebase-adminsdk*.json
+*service-account*.json
 *.zip

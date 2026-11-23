@@ -4,6 +4,7 @@ import { makeDirectoryApi, parseTransport, collectPartnerships, buildDirectory }
 import { monitoredFetch } from './api-monitor.js';
 import { knowledgeFor } from './knowledge.js';
 import { mobileSync,waitMobile,initMobile,connectMobile,mobileDevice,ackMobile } from './mobile.js';
+import {initFcm,registerPush,FcmDispatcher} from './fcm.js';
 import { createCatalogPager } from './catalog-pager.js';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -29,8 +30,9 @@ async function body(req) {
   return value;
 }
 
-export function createPortal({ store, setupToken = '', trustProxy = false, botWorker = null, directoryFetch=fetch, demoMode=false }) {
+export function createPortal({ store, setupToken = '', trustProxy = false, botWorker = null, directoryFetch=fetch, demoMode=false,pushWorker=null }) {
   initMobile(store);
+  initFcm(store);
   const attempts = new Map();
   const catalogPager=createCatalogPager(store,{fetchImpl:directoryFetch});
   return createServer(async (req, res) => {
@@ -84,6 +86,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         if (!user) fail(401,'Войдите в портал.');
         if(url.pathname==='/api/mobile/connect'&&req.method==='POST'){if(!browserUser)fail(403,'Войдите в кабинет для подключения телефона.');return json(200,connectMobile(store,browserUser,(await body(req)).installationId));}
         if(url.pathname==='/api/mobile/disconnect'&&req.method==='POST'){if(device)store.db.prepare('DELETE FROM mobile_devices WHERE id=?').run(device.id);return json(200,{ok:true});}
+        if(url.pathname==='/api/mobile/push-token'&&req.method==='POST'){if(!device)fail(401,'Подключите телефон заново.');return json(200,{...registerPush(store,device,await body(req)),configured:Boolean(pushWorker?.enabled)});}
         const mobileAck=/^\/api\/mobile\/alerts\/(\d+)\/ack$/.exec(url.pathname);
         if(mobileAck&&req.method==='POST'){if(!device)fail(401,'Подключите телефон заново.');return json(200,ackMobile(store,device.user,device,Number(mobileAck[1])));}
         if(url.pathname==='/api/mobile/sync'&&req.method==='GET'){
@@ -254,11 +257,12 @@ export async function startPortal() {
     catch { console.error('Could not import DIRECTORY_FILE. Import directory.json in the portal.'); }
   }
   const botWorker=new BotWorker(store);
-  const server = createPortal({store,setupToken:process.env.SETUP_TOKEN,trustProxy:process.env.TRUST_PROXY === '1',botWorker,demoMode:process.env.DEMO_SEED === '1'});
+  initMobile(store);initFcm(store);const pushWorker=new FcmDispatcher(store);
+  const server = createPortal({store,setupToken:process.env.SETUP_TOKEN,trustProxy:process.env.TRUST_PROXY === '1',botWorker,demoMode:process.env.DEMO_SEED === '1',pushWorker});
   const port = Number(process.env.PORT || 3000), host = process.env.HOST || '0.0.0.0';
-  server.listen(port,host,() => {console.log(`Local: http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);if(process.env.DEMO_SEED !== '1')botWorker.start();else console.log('DEMO: monitoring disabled. Use npm run dev for the real worker.');});
+  server.listen(port,host,() => {console.log(`Local: http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);if(process.env.DEMO_SEED !== '1'){botWorker.start();pushWorker.start();}else console.log('DEMO: monitoring disabled. Use npm run dev for the real worker.');});
   server.on('error',error => {console.error('Server error:',error.code);store.close();process.exitCode=1;});
-  for (const signal of ['SIGINT','SIGTERM']) process.on(signal,() => {botWorker.stop();server.close(() => {store.close();process.exit(0);});});
+  for (const signal of ['SIGINT','SIGTERM']) process.on(signal,() => {botWorker.stop();pushWorker.stop();server.close(() => {store.close();process.exit(0);});});
   return {server,store,botWorker};
 }
 

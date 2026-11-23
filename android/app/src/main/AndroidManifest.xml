@@ -17,5 +17,7 @@
         <service android:name=".MonitorService" android:exported="false" android:stopWithTask="false" android:foregroundServiceType="specialUse|mediaPlayback">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled continuous dispatch duty: receive time-critical fleet assignment and incident alerts from a private logistics portal during a working shift." />
         </service>
+        <service android:name=".PushService" android:exported="false"><intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT"/></intent-filter></service>
+        <service android:name=".PushRegistrationJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true" />
     </application>
 </manifest>

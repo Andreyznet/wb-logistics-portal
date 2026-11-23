@@ -9,7 +9,7 @@ final class AlarmPlayer {
         try {
             int resource=c.getResources().getIdentifier(sound.replace('-','_'),"raw",c.getPackageName());
             if(resource==0)resource=R.raw.pulse_alarm;
-            player=new MediaPlayer();player.setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build());
+            player=new MediaPlayer();player.setWakeMode(c,PowerManager.PARTIAL_WAKE_LOCK);player.setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build());
             try(android.content.res.AssetFileDescriptor fd=c.getResources().openRawResourceFd(resource)){player.setDataSource(fd.getFileDescriptor(),fd.getStartOffset(),fd.getLength());}
             player.setLooping(true);float level=Math.max(0.1f,Math.min(1f,volume/100f));player.setVolume(level,level);player.prepare();player.start();
             vibrator=(Vibrator)c.getSystemService(Context.VIBRATOR_SERVICE);if(vibrator!=null)vibrator.vibrate(VibrationEffect.createWaveform(new long[]{0,500,700},0));

@@ -55,7 +55,7 @@ test('event page includes its acceptance result and endpoints enforce administra
  }finally{await new Promise(resolve=>server.close(resolve));store.close();}
 });
 test('history controls convert portal time explicitly and map remote rows and filter labels',()=>{
- const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8'),block=source.slice(source.indexOf('const historyRanges='));const context=vm.createContext({URLSearchParams,Date,logNames:{poll_started:'Начало проверки'},monitorTime:v=>v,logSummary:()=>'',acceptanceMarkup:()=>'',state:{bot:{}},document:{}});vm.runInContext(block,context);
+ const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8'),block=source.slice(source.indexOf('const historyRanges='));const context=vm.createContext({URLSearchParams,Date,logNames:{poll_started:'Начало проверки'},icon:()=>'',monitorTime:v=>v,logSummary:()=>'',acceptanceMarkup:()=>'',state:{bot:{}},document:{}});vm.runInContext(block,context);
  const params=vm.runInContext("historyParams('logs',{page:1,filters:[{field:'event',value:'Начало проверки'}]})",context);assert.equal(JSON.parse(params.get('filters'))[0].value,'poll_started');
  assert.equal(new Date('2026-11-22T02:07:20+05:00').toISOString(),'2026-11-21T21:07:20.000Z');
  assert.match(vm.runInContext("historyControls('logs')",context),/datetime-local/);

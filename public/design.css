@@ -2273,6 +2273,7 @@ dialog::backdrop {
 .dashboard-recent:focus-visible{outline:2px solid var(--accent);outline-offset:-3px}
 
 .history-filters{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;padding:16px 20px;border-bottom:1px solid var(--line)}
+.history-extra{display:contents}.history-toggle{display:none}.history-apply{display:inline-flex;align-items:center;justify-content:center;gap:8px}.history-apply svg{width:16px;height:16px}
 .history-filters label{display:grid;gap:6px;font-size:12px;color:var(--muted);min-width:0}
 .history-filters input{min-height:38px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);max-width:100%;box-sizing:border-box}
 .history-filters .history-search{flex:1;min-width:180px}.history-filters .field-hint,.history-error{flex-basis:100%;margin:0}.history-error{color:var(--danger);font-size:13px}.history-error:empty{display:none}
@@ -2311,3 +2312,44 @@ dialog::backdrop {
 .badge.bot-run-status::before{display:none}
 .badge.bot-running{color:var(--ok)}
 .bot-run-status svg{width:14px;height:14px;flex:none}
+
+/* Compact mobile pages: preserve actions, use cards for paginated history. */
+@media(max-width:700px){
+ .content{padding:12px 12px 28px}
+ .content>.pagehead>div:first-child{display:none!important}
+ .content>.pagehead:not(:has(.pagehead-actions)){display:none!important}
+ .content>.pagehead{min-height:0;gap:0;margin:0 0 12px;justify-content:flex-end}
+ .content>.pagehead .pagehead-actions{position:static!important;margin:0;width:100%}
+ .content>.pagehead .pagehead-actions>button{margin-left:auto}
+ .content>.pagehead:has(.dashboard-actions){gap:0;flex-direction:row}
+ .bot-events-card>.panel-intro{padding:8px 12px;min-height:0;justify-content:flex-end}
+ .bot-events-card>.panel-intro h2{display:none}
+ .bot-events-card>.panel-intro .refresh{padding:5px 0;font-size:12px}
+ .history-filters{padding:10px 12px;gap:8px;display:grid;grid-template-columns:minmax(0,1fr) 38px 38px;align-items:center}
+ .history-filters .history-search{min-width:0;display:block}.history-search>span{display:none}
+ .history-filters input{width:100%;min-width:0;font-size:13px;min-height:38px}
+ .history-filters button{min-width:0;min-height:38px;padding:8px}
+ .history-filters .history-apply span,.history-toggle span{display:none}
+ .history-toggle{display:inline-flex;align-items:center;justify-content:center}.history-toggle svg{width:17px;height:17px}
+ .history-extra{display:none;grid-column:1/-1;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;align-items:end}
+ .history-filters.is-expanded .history-extra{display:grid}
+ .history-extra label{min-width:0;font-size:11px}.history-extra input{font-size:12px}
+ .history-extra .field-hint{grid-column:1/-1;font-size:10px;line-height:1.5}
+ .history-error{grid-column:1/-1}
+ .mobile-history-top{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;font-size:12px;color:var(--muted)}
+ .mobile-history-top select{max-width:155px;min-height:32px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font-size:12px}
+ .mobile-history-cards{display:grid;gap:10px;padding:0 10px 10px}
+ .mobile-found-card{min-width:0;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow-wrap:anywhere}
+ .mobile-found-head{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;margin-bottom:12px}
+ .mobile-found-head strong{font-size:12px;text-align:right;font-weight:600}
+ .mobile-found-card dl{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin:0 0 12px}
+ .mobile-found-card dt{font-size:10px;color:var(--muted);margin-bottom:4px}.mobile-found-card dd{font-size:12px;margin:0;color:var(--ink)}
+ .mobile-found-outcome{font-size:12px;border-top:1px solid var(--line);padding-top:10px;line-height:1.5}
+ .mobile-found-outcome .outcome-description{display:block;margin-top:5px;color:var(--muted);white-space:normal;overflow-wrap:anywhere}
+ .mobile-found-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}.mobile-found-actions button{min-width:34px;min-height:34px;padding:7px}.mobile-found-actions svg{width:16px;height:16px}
+ .mobile-found-actions .is-danger,.mobile-log-http.is-danger{color:var(--danger)}
+ .mobile-history-pager{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+ .mobile-history-pager button{min-height:36px;padding:8px 14px;font-size:12px}
+ .mobile-history-empty{padding:24px 12px;text-align:center;font-size:13px;color:var(--muted)}
+ .mobile-found-card>small{font-size:11px;color:var(--muted)}.mobile-log-result{font-size:12px;line-height:1.6;margin:10px 0 0}
+}

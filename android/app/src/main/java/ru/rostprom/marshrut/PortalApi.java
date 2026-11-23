@@ -1,6 +1,5 @@
 package ru.rostprom.marshrut;
 
-import android.webkit.CookieManager;
 import org.json.JSONObject;
 import java.io.*;
 import java.net.*;
@@ -10,12 +9,15 @@ final class PortalApi {
     static final String ORIGIN="https://open-key.ru";
     static class ApiException extends IOException { final int status; ApiException(int s){super("HTTP "+s);status=s;} }
     static JSONObject call(String path, boolean post) throws Exception {
+        return call(path,post,DeviceAuth.token());
+    }
+    static JSONObject call(String path, boolean post,String credential) throws Exception {
         HttpURLConnection c=(HttpURLConnection)new URL(ORIGIN+"/portal-api/"+path).openConnection();
         try {
             c.setInstanceFollowRedirects(false);c.setConnectTimeout(12000);c.setReadTimeout(15000);
             c.setRequestProperty("Accept","application/json");
-            String cookie=CookieManager.getInstance().getCookie(ORIGIN);
-            if(cookie!=null)c.setRequestProperty("Cookie",cookie);
+            if(credential.isEmpty())throw new ApiException(401);
+            c.setRequestProperty("Authorization","Bearer "+credential);
             if(post){c.setRequestMethod("POST");c.setRequestProperty("Origin",ORIGIN);c.setRequestProperty("Content-Type","application/json");c.setDoOutput(true);try(OutputStream out=c.getOutputStream()){out.write("{}".getBytes(StandardCharsets.UTF_8));}}
             int status=c.getResponseCode();if(status!=200)throw new ApiException(status);
             String type=c.getContentType();if(type==null||!type.contains("application/json"))throw new IOException("Сервер вернул не JSON");

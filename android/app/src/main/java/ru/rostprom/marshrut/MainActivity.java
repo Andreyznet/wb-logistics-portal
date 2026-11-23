@@ -17,10 +17,10 @@ import java.io.OutputStream;
 
 public final class MainActivity extends Activity {
     private WebView web;private TextView connection;private final Handler main=new Handler();
-    private ValueCallback<Uri[]> fileCallback;private byte[] download;private boolean resumed=false,permissionAsked=false,alertOpen=false;
+    private ValueCallback<Uri[]> fileCallback;private byte[] download;private boolean resumed=false,permissionAsked=false,alertOpen=false,connecting=false;private long connectingUser=0;
     private final BroadcastReceiver updates=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){refreshNativeState();}};
     @Override public void onCreate(Bundle saved){
-        super.onCreate(saved);Prefs.get(this).edit().putBoolean("running",false).apply();
+        super.onCreate(saved);DeviceAuth.init(this);Prefs.get(this).edit().putBoolean("running",false).apply();
         LinearLayout layout=new LinearLayout(this);layout.setOrientation(LinearLayout.VERTICAL);layout.setBackgroundColor(0xfff6f8fb);
         layout.setOnApplyWindowInsetsListener((v,insets)->{v.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());return insets.consumeSystemWindowInsets();});
         LinearLayout bar=new LinearLayout(this);bar.setGravity(Gravity.CENTER_VERTICAL);bar.setPadding(dp(12),dp(4),dp(12),dp(4));
@@ -29,9 +29,9 @@ public final class MainActivity extends Activity {
         Button menu=new Button(this);menu.setText("⋯");menu.setContentDescription("Настройки приложения");bar.addView(menu,new LinearLayout.LayoutParams(dp(56),dp(52)));layout.addView(bar);
         connection=new TextView(this);connection.setPadding(dp(16),dp(4),dp(16),dp(8));connection.setTextSize(12);layout.addView(connection);
         web=new WebView(this);layout.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(layout);
-        WebSettings settings=web.getSettings();settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);settings.setUserAgentString(settings.getUserAgentString()+" MarshrutAndroid/1.0");settings.setMediaPlaybackRequiresUserGesture(true);
+        WebSettings settings=web.getSettings();settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);settings.setUserAgentString(settings.getUserAgentString()+" MarshrutAndroid/1.0.1");settings.setMediaPlaybackRequiresUserGesture(true);
         CookieManager.getInstance().setAcceptCookie(true);CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);
-        web.addJavascriptInterface(new Downloads(),"MarshrutFiles");
+        web.addJavascriptInterface(new Downloads(),"MarshrutFiles");web.addJavascriptInterface(new Session(),"MarshrutSession");
         web.setWebViewClient(new WebViewClient(){
             @Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){Uri u=r.getUrl();if(trusted(u.toString()))return false;if("https".equals(u.getScheme())){try{startActivity(new Intent(Intent.ACTION_VIEW,u));}catch(Exception ignored){}}return true;}
             @Override public void onPageFinished(WebView v,String url){CookieManager.getInstance().flush();if(trusted(url))probeLogin();}
@@ -54,24 +54,47 @@ public final class MainActivity extends Activity {
     private final Runnable probe=new Runnable(){public void run(){if(resumed){probeLogin();main.postDelayed(this,3000);}}};
     private void probeLogin(){
         if(!trusted(web.getUrl()))return;
-        web.evaluateJavascript("(typeof state!=='undefined'&&state.user)?String(state.user.id):''",value->{
-            if(!resumed)return;
-            boolean signedIn=value!=null&&!value.equals("\"\"")&&!value.equals("null");
-            if(signedIn){CookieManager.getInstance().flush();startMonitoring();}
-            else if(Prefs.get(this).getLong("user",0)!=0){stopService(new Intent(this,MonitorService.class));Prefs.clearAccount(this);}
+        web.evaluateJavascript("typeof syncAndroidSession==='function'?(syncAndroidSession(),'ready'):((typeof state!=='undefined'&&state.user)?String(state.user.id):'')",value->{
+            if(value!=null&&value.matches("\"[0-9]+\""))connect(Long.parseLong(value.replace("\"","")));
         });
     }
+    private void connect(long userId){
+        if(!trusted(web.getUrl())||!resumed||connecting)return;
+        if(Prefs.get(this).getLong("user",0)==userId&&!DeviceAuth.token().isEmpty()){startMonitoring();return;}
+        stopService(new Intent(this,MonitorService.class));DeviceAuth.clear();Prefs.clearAccount(this);
+        connecting=true;connectingUser=userId;connection.setText("Подключаем уведомления телефона…");
+        String installation=Prefs.get(this).getString("installation","");if(installation.isEmpty()){installation=UUID.randomUUID().toString();Prefs.get(this).edit().putString("installation",installation).apply();}
+        String js="fetch('/portal-api/mobile/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({installationId:"+JSONObject.quote(installation)+"})}).then(async r=>{if(!r.ok)throw Error('HTTP '+r.status);return r.json();}).then(d=>MarshrutSession.connected(JSON.stringify(d))).catch(e=>MarshrutSession.failed(String(e.message)))";
+        web.evaluateJavascript(js,null);
+    }
+    public final class Session {
+        @JavascriptInterface public void signedIn(String userId){main.post(()->{try{connect(Long.parseLong(userId));}catch(Exception ignored){}});}
+        @JavascriptInterface public void connected(String raw){main.post(()->{
+            if(!trusted(web.getUrl())||!connecting)return;
+            try{JSONObject data=new JSONObject(raw);if(data.getLong("userId")!=connectingUser||!data.getString("token").matches("[A-Za-z0-9_-]{43}"))throw new Exception();
+                DeviceAuth.save(data.getString("token"));Prefs.get(MainActivity.this).edit().putLong("user",connectingUser).putString("cursor",Long.toString(data.getLong("cursor"))).remove("connectionError").apply();connecting=false;startMonitoring();refreshNativeState();
+            }catch(Exception e){connecting=false;connection.setText("Не удалось сохранить подключение телефона. Повторите вход.");}
+        });}
+        @JavascriptInterface public void failed(String reason){main.post(()->{connecting=false;connection.setText("Не удалось подключить уведомления: "+reason+". Обновите сервер и повторите вход.");});}
+        @JavascriptInterface public void signedOut(){main.post(()->{if(!trusted(web.getUrl()))return;connecting=false;String credential=DeviceAuth.token();stopService(new Intent(MainActivity.this,MonitorService.class));DeviceAuth.clear();Prefs.clearAccount(MainActivity.this);if(!credential.isEmpty())new Thread(()->{try{PortalApi.call("mobile/disconnect",true,credential);}catch(Exception ignored){}},"disconnect").start();refreshNativeState();});}
+    }
+
     private void startMonitoring(){
-        if(!Prefs.enabled(this))return;
+        if(!Prefs.enabled(this)||DeviceAuth.token().isEmpty())return;
         if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){
             if(!permissionAsked){permissionAsked=true;new AlertDialog.Builder(this).setTitle("Уведомления о заявках").setMessage("Разрешите уведомления, чтобы получать заявки и ошибки при свёрнутом приложении. Фоновая связь видна постоянным уведомлением; звук заявки повторяется до ОК.").setPositiveButton("Разрешить",(d,w)->requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},20)).setNegativeButton("Позже",null).show();}return;
         }
-        if(!Prefs.get(this).getBoolean("running",false)){try{startForegroundService(new Intent(this,MonitorService.class));}catch(Exception e){connection.setText("Не удалось включить фон. Откройте настройки приложения.");}}
+        if(!Prefs.get(this).getBoolean("running",false)||System.currentTimeMillis()-Prefs.get(this).getLong("lastAttempt",0)>45000){try{startForegroundService(new Intent(this,MonitorService.class));}catch(Exception e){connection.setText("Не удалось включить фон. Откройте настройки приложения.");}}
+        if(resumed&&!batteryExempt()&&!Prefs.get(this).getBoolean("batteryPrompt101",false)){Prefs.get(this).edit().putBoolean("batteryPrompt101",true).apply();requestBatteryExemption();}
     }
+    private boolean batteryExempt(){return ((PowerManager)getSystemService(POWER_SERVICE)).isIgnoringBatteryOptimizations(getPackageName());}
+    private void requestBatteryExemption(){new AlertDialog.Builder(this).setTitle("Уведомления при выключенном экране").setMessage("Разрешите фоновую работу без оптимизации батареи. Без этого Android может приостановить интернет при блокировке экрана. Во время смены расход батареи увеличится.").setPositiveButton("Разрешить",(d,w)->{try{startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,Uri.parse("package:"+getPackageName())));}catch(Exception e){startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));}}).setNegativeButton("Позже",null).show();}
     private void refreshNativeState(){
         if(connection==null)return;
         long last=Prefs.get(this).getLong("lastSync",0);
-        connection.setText(!Prefs.enabled(this)?"Фоновые уведомления выключены":!getSystemService(NotificationManager.class).areNotificationsEnabled()?"Разрешите уведомления в настройках Android":last==0?"Войдите в кабинет для фоновой связи":Prefs.get(this).getString("bot","Подключение…")+" · связь "+(System.currentTimeMillis()-last<45000?"есть":"ожидается"));
+        String failure=Prefs.get(this).getString("connectionError","");
+        connection.setText(!failure.isEmpty()?failure:!Prefs.enabled(this)?"Фоновые уведомления выключены":!getSystemService(NotificationManager.class).areNotificationsEnabled()?"Разрешите уведомления в настройках Android":last==0?"Войдите в кабинет для фоновой связи":Prefs.get(this).getString("bot","Подключение…")+" · связь "+(System.currentTimeMillis()-last<45000?"есть":"ожидается"));
+        if(Prefs.enabled(this)&&!batteryExempt())connection.append(" · батарея ограничивает фон (⋯)");
         if(resumed&&!alertOpen){try{JSONArray queue=new JSONArray(Prefs.get(this).getString("queue","[]"));Set<String> acks=Prefs.get(this).getStringSet("acks",Collections.emptySet());for(int i=0;i<queue.length();i++){long id=queue.getJSONObject(i).getLong("id");if(!acks.contains(Long.toString(id))){alertOpen=true;startActivityForResult(new Intent(this,AlertActivity.class).putExtra("id",id),30);break;}}}catch(Exception ignored){}}
     }
     private void settings(){
@@ -79,11 +102,11 @@ public final class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("Настройки приложения").setItems(choices,(d,which)->{
             if(which==0){boolean enable=!Prefs.enabled(this);Prefs.get(this).edit().putBoolean("enabled",enable).apply();if(enable){permissionAsked=false;startMonitoring();}else stopService(new Intent(this,MonitorService.class));refreshNativeState();}
             if(which==1)startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()));
-            if(which==2){new AlertDialog.Builder(this).setTitle("Фоновая работа").setMessage("В настройках батареи разрешите приложению работу без ограничений. На Xiaomi, Honor и других устройствах также может требоваться автозапуск. Постоянная связь во время смены увеличивает расход батареи.").setPositiveButton("Открыть настройки",(x,y)->startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())))).setNegativeButton("Закрыть",null).show();}
-            if(which==3)new AlertDialog.Builder(this).setTitle("Маршрут 1.0.0").setMessage("Все функции портала + системные уведомления Android. Сервер: open-key.ru. Фоновая связь проверяет события примерно каждые 15 секунд. При отсутствии сети доставка задерживается. После принудительной остановки или перезагрузки откройте приложение снова. Изменить личный сигнал можно в профиле портала.").setPositiveButton("ОК",null).show();
+            if(which==2){if(!batteryExempt())requestBatteryExemption();else new AlertDialog.Builder(this).setTitle("Фон разрешён").setMessage("Исключение из оптимизации батареи включено. На Xiaomi, Honor и других устройствах дополнительно проверьте автозапуск и разрешение фоновой сети в настройках приложения.").setPositiveButton("Настройки телефона",(d2,w)->startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())))).setNegativeButton("Закрыть",null).show();}
+            if(which==3)new AlertDialog.Builder(this).setTitle("Маршрут 1.0.1").setMessage("Все функции портала + системные уведомления Android. Сервер: open-key.ru. Фоновая связь проверяет события примерно каждые 15 секунд. При отсутствии сети доставка задерживается. После принудительной остановки или перезагрузки откройте приложение снова. Изменить личный сигнал можно в профиле портала.").setPositiveButton("ОК",null).show();
         }).show();
     }
-    private final class Downloads {
+    public final class Downloads {
         @JavascriptInterface public void save(String name,String base64){
             if(base64==null||base64.length()>7*1024*1024)return;
             main.post(()->{if(!trusted(web.getUrl()))return;try{download=android.util.Base64.decode(base64,android.util.Base64.DEFAULT);if(download.length>5*1024*1024){download=null;return;}Intent save=new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/json").addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_TITLE,"marshrut-export.json");startActivityForResult(save,11);}catch(Exception e){download=null;}});
@@ -94,5 +117,5 @@ public final class MainActivity extends Activity {
     @Override protected void onResume(){super.onResume();resumed=true;main.post(probe);refreshNativeState();}
     @Override protected void onPause(){resumed=false;main.removeCallbacks(probe);CookieManager.getInstance().flush();super.onPause();}
     @Override public void onBackPressed(){if(web.canGoBack())web.goBack();else moveTaskToBack(true);}
-    @Override protected void onDestroy(){unregisterReceiver(updates);main.removeCallbacksAndMessages(null);if(fileCallback!=null)fileCallback.onReceiveValue(null);web.removeJavascriptInterface("MarshrutFiles");web.destroy();super.onDestroy();}
+    @Override protected void onDestroy(){unregisterReceiver(updates);main.removeCallbacksAndMessages(null);if(fileCallback!=null)fileCallback.onReceiveValue(null);web.removeJavascriptInterface("MarshrutFiles");web.removeJavascriptInterface("MarshrutSession");web.destroy();super.onDestroy();}
 }

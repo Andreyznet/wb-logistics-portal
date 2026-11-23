@@ -3,7 +3,7 @@ import {dashboard} from './dashboard.js';
 import { makeDirectoryApi, parseTransport, collectPartnerships, buildDirectory } from './directory-api.js';
 import { monitoredFetch } from './api-monitor.js';
 import { knowledgeFor } from './knowledge.js';
-import { mobileSync } from './mobile.js';
+import { mobileSync,initMobile,connectMobile,mobileDevice,ackMobile } from './mobile.js';
 import { createCatalogPager } from './catalog-pager.js';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -30,6 +30,7 @@ async function body(req) {
 }
 
 export function createPortal({ store, setupToken = '', trustProxy = false, botWorker = null, directoryFetch=fetch, demoMode=false }) {
+  initMobile(store);
   const attempts = new Map();
   const catalogPager=createCatalogPager(store,{fetchImpl:directoryFetch});
   return createServer(async (req, res) => {
@@ -51,7 +52,8 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
     try {
       if (!['GET','POST'].includes(req.method)) fail(405,'Метод не поддерживается.');
       if (req.method === 'POST' && req.headers.origin !== origin) fail(403,'Недопустимый источник запроса.');
-      const user = store.session(token);
+      const browserUser=store.session(token),device=url.pathname.startsWith('/api/mobile/')?mobileDevice(store,req.headers.authorization):null;
+      const user=device?.user||browserUser;
       if (url.pathname === '/api/session' && req.method === 'GET') return json(200, {
         serverVersion:'0.18.3',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
         today: businessDate(store.timeZone), timeZone: store.timeZone,
@@ -80,7 +82,11 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       }
       if (url.pathname.startsWith('/api/')) {
         if (!user) fail(401,'Войдите в портал.');
-        if(url.pathname==='/api/mobile/sync'&&req.method==='GET')return json(200,mobileSync(store,user,Object.fromEntries(url.searchParams)));
+        if(url.pathname==='/api/mobile/connect'&&req.method==='POST'){if(!browserUser)fail(403,'Войдите в кабинет для подключения телефона.');return json(200,connectMobile(store,browserUser,(await body(req)).installationId));}
+        if(url.pathname==='/api/mobile/disconnect'&&req.method==='POST'){if(device)store.db.prepare('DELETE FROM mobile_devices WHERE id=?').run(device.id);return json(200,{ok:true});}
+        const mobileAck=/^\/api\/mobile\/alerts\/(\d+)\/ack$/.exec(url.pathname);
+        if(mobileAck&&req.method==='POST'){if(!device)fail(401,'Подключите телефон заново.');return json(200,ackMobile(store,device.user,device,Number(mobileAck[1])));}
+        if(url.pathname==='/api/mobile/sync'&&req.method==='GET')return json(200,mobileSync(store,user,Object.fromEntries(url.searchParams),device));
         if(url.pathname==='/api/knowledge'&&req.method==='GET')return json(200,{data:knowledgeFor(user.role)});
         if(url.pathname==='/api/bot/test-alert'&&req.method==='POST'){const input=await body(req);return json(201,store.createTestAlert(input.planId??null,user));}
         if(url.pathname==='/api/me/alerts'&&req.method==='GET')return json(200,{data:store.userAlerts(user)});

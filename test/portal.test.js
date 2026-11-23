@@ -110,7 +110,7 @@ test('HTTP authentication, roles, same-origin writes, setup closure and full req
     assert.equal((await call('/api/users',{username:'logist',name:'Logist',password:'another-password-123'})).res.status,201);
     const logged=await call('/api/login',{username:'logist',password:'another-password-123'},{cookie:''});
     const logistCookie=logged.res.headers.get('set-cookie').split(';')[0];
-    assert.equal((await call('/api/catalog/import',directory,{cookie:logistCookie})).res.status,404);
+    assert.equal((await call('/api/catalog/import',directory,{cookie:logistCookie})).res.status,403);
     assert.equal((await call('/api/bot/settings',undefined,{cookie:logistCookie})).res.status,403);
     assert.equal((await call('/api/bot/settings',{token:'must-not-be-saved'},{cookie:logistCookie})).res.status,403);
     assert.equal((await call('/api/bot/status',undefined,{cookie:logistCookie})).res.status,403);

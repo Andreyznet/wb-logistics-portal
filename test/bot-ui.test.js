@@ -7,7 +7,7 @@ test('header and checkbox share state; stale poll cannot undo an immediate toggl
  const source=await readFile(new URL('../public/app.js',import.meta.url),'utf8');
  const block=source.slice(source.indexOf('let botMutating=false'),source.indexOf('setInterval(()=>{if(!document.hidden)void updateHeaderBot();}'));
  const box={innerHTML:''},toggle={checked:true,disabled:false};let finishPoll;
- const context=vm.createContext({state:{user:{role:'admin'},view:'bot',bot:{settings:{enabled:true}}},document:{querySelector:s=>s==='#header-bot'?box:s==='#bot-enabled'?toggle:null},esc:String,icon:()=>'',botStateNames:{waiting:'Ожидает проверки',stopped:'Выключен'},renderBotRuntime:()=>{},updateBotSettingsLock:()=>{},toast:()=>{},api:async(path,options)=>{
+ const context=vm.createContext({can:()=>true,state:{user:{role:'admin'},view:'bot',bot:{settings:{enabled:true}}},document:{querySelector:s=>s==='#header-bot'?box:s==='#bot-enabled'?toggle:null},esc:String,icon:()=>'',botStateNames:{waiting:'Ожидает проверки',stopped:'Выключен'},renderBotRuntime:()=>{},updateBotSettingsLock:()=>{},toast:()=>{},api:async(path,options)=>{
   if(path==='/api/bot/status?summary=1')return new Promise(resolve=>{finishPoll=resolve;});
   if(!options)return{settings:{enabled:true,revision:1}};
   assert.equal(options.data.enabled,false);return{settings:{enabled:false,revision:2},runtime:{state:'stopped'}};
@@ -31,8 +31,9 @@ test('status conflict stays visible for logist and is not overwritten by refresh
 
 test('settings lock follows running state and aggression displays seconds',async()=>{
  const source=await readFile(new URL('../public/app.js',import.meta.url),'utf8');const block=source.slice(source.indexOf('function updateBotSettingsLock('),source.indexOf('function renderBotSettings('));
- const fields={disabled:false},save={disabled:false},hint={hidden:true},rate={value:'4'},seconds={textContent:''};const state={bot:{settings:{enabled:true}}};const context=vm.createContext({state,Intl,document:{querySelector:key=>({'#bot-settings-fields':fields,'#bot-save':save,'#bot-lock-hint':hint,'#bot-rate':rate,'#bot-rate-hint':seconds}[key])}});vm.runInContext(block,context);vm.runInContext('updateBotSettingsLock();updateAggressionHint()',context);assert.equal(fields.disabled,true);assert.equal(save.disabled,true);assert.equal(hint.hidden,false);assert.match(seconds.textContent,/15 сек/);
+ const fields={disabled:false},save={disabled:false},hint={hidden:true},rate={value:'4'},seconds={textContent:''};const state={bot:{settings:{enabled:true}}};const context=vm.createContext({can:()=>true,state,Intl,document:{querySelector:key=>({'#bot-settings-fields':fields,'#bot-save':save,'#bot-lock-hint':hint,'#bot-rate':rate,'#bot-rate-hint':seconds}[key])}});vm.runInContext(block,context);vm.runInContext('updateBotSettingsLock();updateAggressionHint()',context);assert.equal(fields.disabled,true);assert.equal(save.disabled,true);assert.equal(hint.hidden,false);assert.match(seconds.textContent,/15 сек/);
  state.bot.settings.enabled=false;vm.runInContext('updateBotSettingsLock()',context);assert.equal(fields.disabled,false);assert.equal(save.disabled,false);for(const [value,expected]of [['1','60 сек'],['60','1 сек'],['7','8,57 сек']]){rate.value=value;vm.runInContext('updateAggressionHint()',context);assert.ok(seconds.textContent.includes(expected));}
+ context.can=()=>false;vm.runInContext('updateBotSettingsLock()',context);assert.equal(fields.disabled,true);assert.equal(save.disabled,true);
 });
 
 test('request list refreshes accepted status without resetting filters and defers while editing',async()=>{

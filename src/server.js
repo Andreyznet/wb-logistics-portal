@@ -1,3 +1,4 @@
+import {permissionsFor,allowed,requirePermission,permissionMatrix,savePermissions,managerActor,diagnosticActor} from './permissions.js';
 import {notificationSounds} from './notification-sounds.js';
 import {dashboard} from './dashboard.js';
 import { makeDirectoryApi, parseTransport, collectPartnerships, buildDirectory } from './directory-api.js';
@@ -57,7 +58,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       const browserUser=store.session(token),device=url.pathname.startsWith('/api/mobile/')?mobileDevice(store,req.headers.authorization):null;
       const user=device?.user||browserUser;
       if (url.pathname === '/api/session' && req.method === 'GET') return json(200, {
-        serverVersion:'0.18.3',user, setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
+        serverVersion:'0.18.3',user,permissions:permissionsFor(store,user), setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
         today: businessDate(store.timeZone), timeZone: store.timeZone,
         ...(demoMode ? { demoMode: true } : {}),
       });
@@ -84,6 +85,30 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       }
       if (url.pathname.startsWith('/api/')) {
         if (!user) fail(401,'Войдите в портал.');
+        if(url.pathname==='/api/access'&&req.method==='GET')return json(200,{user,permissions:permissionsFor(store,user)});
+        if(url.pathname==='/api/admin/permissions'){
+          if(user.role!=='super_admin')fail(403,'Панель прав доступна только администратору.');
+          return json(200,req.method==='GET'?permissionMatrix(store):savePermissions(store,await body(req),user));
+        }
+        const path=url.pathname,method=req.method,check=key=>requirePermission(store,user,key);
+        if(path==='/api/activity')check('activity');
+        if(path==='/api/dashboard')check('dashboard');
+        if(path==='/api/knowledge')check('knowledge');
+        if(path==='/api/requests')check(method==='GET'?'requests':'requests.create');
+        if(/^\/api\/requests\/\d+(?:\/status|\/watch)?$/.test(path)&&method==='POST')check(path.endsWith('/watch')?'requests.watch':path.endsWith('/status')?'requests.status':'requests.edit');
+        if(path==='/api/users'||/^\/api\/users\/\d+$/.test(path))check(method==='GET'?'users':'users.manage');
+        if(path.startsWith('/api/catalog/')){
+          if(method==='POST')check('catalog.manage');
+          else if(!['catalog','requests','dashboard'].some(k=>allowed(store,user,k)))fail(403,'Справочники недоступны.');
+        }
+        if(path==='/api/catalog'&&!['catalog','requests'].some(k=>allowed(store,user,k)))fail(403,'Справочники недоступны.');
+        if(['/api/bot/settings','/api/bot/status'].includes(path))check(method==='GET'?'bot':'bot.manage');
+        if(path==='/api/bot/test-alert')check('bot.manage');
+        if(path==='/api/bot/history/events')check('found');
+        if(path==='/api/bot/history/logs')check('logs');
+        if(/^\/api\/bot\/(attempts|snapshots)\/\d+$/.test(path))check('found.details');
+        if(/^\/api\/bot\/events\/\d+\/delete$/.test(path))check('found.delete');
+
         if(url.pathname==='/api/mobile/connect'&&req.method==='POST'){if(!browserUser)fail(403,'Войдите в кабинет для подключения телефона.');return json(200,connectMobile(store,browserUser,(await body(req)).installationId));}
         if(url.pathname==='/api/mobile/disconnect'&&req.method==='POST'){if(device)store.db.prepare('DELETE FROM mobile_devices WHERE id=?').run(device.id);return json(200,{ok:true});}
         if(url.pathname==='/api/mobile/push-token'&&req.method==='POST'){if(!device)fail(401,'Подключите телефон заново.');return json(200,{...registerPush(store,device,await body(req)),configured:Boolean(pushWorker?.enabled)});}
@@ -97,7 +122,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
           return json(200,current?mobileSync(store,current.user,query,current):result);
         }
         if(url.pathname==='/api/knowledge'&&req.method==='GET')return json(200,{data:knowledgeFor(user.role)});
-        if(url.pathname==='/api/bot/test-alert'&&req.method==='POST'){const input=await body(req);return json(201,store.createTestAlert(input.planId??null,user));}
+        if(url.pathname==='/api/bot/test-alert'&&req.method==='POST'){const input=await body(req);return json(201,store.createTestAlert(input.planId??null,managerActor(user)));}
         if(url.pathname==='/api/me/alerts'&&req.method==='GET')return json(200,{data:store.userAlerts(user)});
         const alertMatch=/^\/api\/me\/alerts\/(\d+)\/ack$/.exec(url.pathname);
         if(alertMatch&&req.method==='POST')return json(200,store.acknowledgeAlert(Number(alertMatch[1]),user));
@@ -110,7 +135,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
           return json(200,{enabled:c.enabled,runtime:r.runtime});
         }
         if(url.pathname==='/api/catalog/sync' && req.method==='POST') {
-          if(!['admin','super_admin'].includes(user.role))fail(403,'Обновление доступно менеджеру и администратору.');
+
           const c=store.botConfig();if(!c.token)fail(400,'Сначала сохраните токен в настройках бота.');
           const headers={Authorization:`Bearer ${c.token}`};const api=makeDirectoryApi({logisticsHeaders:headers,driveHeaders:headers},monitoredFetch(store,directoryFetch));
           try {
@@ -121,26 +146,26 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
           } catch {fail(502,'Не удалось обновить справочник WB. Проверьте токен и повторите позже.');}
         }
         if (url.pathname === '/api/bot/settings') {
-          if(!['admin','super_admin'].includes(user.role))fail(403,'Настройки бота доступны менеджеру и администратору.');
-          if(req.method==='GET')return json(200,{settings:store.getBotSettings(user),...store.getBotStatus(user,url.searchParams.get('summary')==='1')});
+
+          if(req.method==='GET')return json(200,{settings:store.getBotSettings(managerActor(user)),...store.getBotStatus(managerActor(user),url.searchParams.get('summary')==='1')});
           if(req.method==='POST'){
             const input=await body(req);
             if(demoMode&&input.enabled)fail(400,'Демо не запускает мониторинг. Остановите сервер и запустите npm run dev или npm start.');
-            const settings=store.saveBotSettings(input,user);
+            const settings=store.saveBotSettings(input,managerActor(user));
             botWorker?.changed();
-            return json(200,{settings,...store.getBotStatus(user,url.searchParams.get('summary')==='1')});
+            return json(200,{settings,...store.getBotStatus(managerActor(user),url.searchParams.get('summary')==='1')});
           }
         }
-        if(req.method==='GET'&&['/api/bot/history/logs','/api/bot/history/events'].includes(url.pathname))return json(200,store.botHistoryPage(url.pathname.endsWith('/logs')?'logs':'events',Object.fromEntries(url.searchParams),user));
+        if(req.method==='GET'&&['/api/bot/history/logs','/api/bot/history/events'].includes(url.pathname))return json(200,store.botHistoryPage(url.pathname.endsWith('/logs')?'logs':'events',Object.fromEntries(url.searchParams),url.pathname.endsWith('/logs')||allowed(store,user,'found.details')?diagnosticActor(user):{...user,role:'logist'}));
         const deleteEventMatch=/^\/api\/bot\/events\/(\d+)\/delete$/.exec(url.pathname);
-        if(deleteEventMatch&&req.method==='POST')return json(200,store.deleteBotEvent(Number(deleteEventMatch[1]),user));
+        if(deleteEventMatch&&req.method==='POST')return json(200,store.deleteBotEvent(Number(deleteEventMatch[1]),diagnosticActor(user)));
         const attemptMatch=/^\/api\/bot\/attempts\/(\d+)$/.exec(url.pathname);
-        if(attemptMatch&&req.method==='GET')return json(200,store.getAcceptanceAttempt(Number(attemptMatch[1]),user));
+        if(attemptMatch&&req.method==='GET')return json(200,store.getAcceptanceAttempt(Number(attemptMatch[1]),diagnosticActor(user)));
         const snapshotMatch=/^\/api\/bot\/snapshots\/(\d+)$/.exec(url.pathname);
-        if(snapshotMatch&&req.method==='GET')return json(200,store.getBotSnapshot(Number(snapshotMatch[1]),user));
+        if(snapshotMatch&&req.method==='GET')return json(200,store.getBotSnapshot(Number(snapshotMatch[1]),diagnosticActor(user)));
         if (url.pathname === '/api/bot/status' && req.method === 'GET') {
-          if(!['admin','super_admin'].includes(user.role))fail(403,'Состояние бота доступно менеджеру и администратору.');
-          return json(200,{settings:store.getBotSettings(user),...store.getBotStatus(user,url.searchParams.get('summary')==='1')});
+
+          return json(200,{settings:store.getBotSettings(managerActor(user)),...store.getBotStatus(managerActor(user),url.searchParams.get('summary')==='1')});
         }
         if (url.pathname === '/api/logout' && req.method === 'POST') { store.logout(token); return json(200,{ok:true},{'Set-Cookie':cookie('')}); }
         if(url.pathname==='/api/dashboard'&&req.method==='GET')return json(200,dashboard(store,user));
@@ -156,20 +181,20 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
           const input = await body(req);
           return json(200,{data:match[2] ? store.changeStatus(Number(match[1]),input.status,input.version,user) : store.saveRequest(input,user,Number(match[1]))});
         }
-        if (url.pathname === '/api/activity' && req.method === 'GET') {if(user.role==='logist')fail(403,'История доступна менеджеру и администратору.');return json(200,{data:store.activity()});}
+        if (url.pathname === '/api/activity' && req.method === 'GET') {return json(200,{data:store.activity()});}
         if (url.pathname === '/api/users' && req.method === 'GET') return json(200,{data:store.users()});
         const userMatch=/^\/api\/users\/(\d+)$/.exec(url.pathname);
-        if(userMatch&&req.method==='POST')return json(200,{user:store.updateUser(Number(userMatch[1]),await body(req),user)});
-        if (url.pathname === '/api/users' && req.method === 'POST') return json(201,{data:store.addUser(await body(req),user)});
-        if (url.pathname === '/api/catalog/import' && req.method === 'POST' && ['admin','super_admin'].includes(user.role)) {const result=store.importDirectory(await body(req),user.id);catalogPager.clear();return json(200,result);}
+        if(userMatch&&req.method==='POST')return json(200,{user:store.updateUser(Number(userMatch[1]),await body(req),managerActor(user))});
+        if (url.pathname === '/api/users' && req.method === 'POST') return json(201,{data:store.addUser(await body(req),managerActor(user))});
+        if (url.pathname === '/api/catalog/import' && req.method === 'POST') {const result=store.importDirectory(await body(req),user.id);catalogPager.clear();return json(200,result);}
         fail(404,'Раздел не найден или недостаточно прав.');
       }
       if (req.method !== 'GET') fail(404,'Страница не найдена.');
       if(url.pathname==='/downloads/marshrut.apk'){
         if(!browserUser)fail(401,'Войдите в портал.');
-        if(browserUser.role!=='super_admin')fail(403,'Скачивание приложения доступно только администратору.');
+        requirePermission(store,browserUser,'download');
       }
-      const files = { '/':'index.html','/paged-list.js':'paged-list.js','/overview.js':'overview.js','/knowledge.js':'knowledge.js','/mobile-history.js':'mobile-history.js','/help/token-authorization.png':'help/token-authorization.png','/downloads/marshrut.apk':'downloads/marshrut.apk','/notification-audio.js':'notification-audio.js','/app.js':'app.js','/styles.css':'styles.css','/design.css':'design.css','/vendor/tabulator/tabulator.min.js':'vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css':'vendor/tabulator/tabulator.min.css','/favicon.svg':'favicon.svg' };
+      const files = { '/':'index.html','/paged-list.js':'paged-list.js','/overview.js':'overview.js','/knowledge.js':'knowledge.js','/permissions.js':'permissions.js','/mobile-history.js':'mobile-history.js','/help/token-authorization.png':'help/token-authorization.png','/downloads/marshrut.apk':'downloads/marshrut.apk','/notification-audio.js':'notification-audio.js','/app.js':'app.js','/styles.css':'styles.css','/design.css':'design.css','/vendor/tabulator/tabulator.min.js':'vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css':'vendor/tabulator/tabulator.min.css','/favicon.svg':'favicon.svg' };
       const preset=/^\/avatars\/(cat|frog|robot|bear|owl)\.svg$/.test(url.pathname);
       const sound=notificationSounds.some(s=>s.url===url.pathname);
       const file = sound||preset?url.pathname.slice(1):files[url.pathname];

@@ -3,6 +3,7 @@ import {dashboard} from './dashboard.js';
 import { makeDirectoryApi, parseTransport, collectPartnerships, buildDirectory } from './directory-api.js';
 import { monitoredFetch } from './api-monitor.js';
 import { knowledgeFor } from './knowledge.js';
+import { mobileSync } from './mobile.js';
 import { createCatalogPager } from './catalog-pager.js';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -79,6 +80,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       }
       if (url.pathname.startsWith('/api/')) {
         if (!user) fail(401,'Войдите в портал.');
+        if(url.pathname==='/api/mobile/sync'&&req.method==='GET')return json(200,mobileSync(store,user,Object.fromEntries(url.searchParams)));
         if(url.pathname==='/api/knowledge'&&req.method==='GET')return json(200,{data:knowledgeFor(user.role)});
         if(url.pathname==='/api/bot/test-alert'&&req.method==='POST'){const input=await body(req);return json(201,store.createTestAlert(input.planId??null,user));}
         if(url.pathname==='/api/me/alerts'&&req.method==='GET')return json(200,{data:store.userAlerts(user)});

@@ -1,0 +1,8 @@
+<resources>
+    <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item><item name="android:colorAccent">#E45400</item>
+        <item name="android:windowLightStatusBar">true</item><item name="android:statusBarColor">#F6F8FB</item><item name="android:navigationBarColor">#F6F8FB</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
+    <style name="AlertTheme" parent="android:style/Theme.Material.Light.Dialog.Alert"><item name="android:colorAccent">#E45400</item><item name="android:windowCloseOnTouchOutside">false</item></style>
+</resources>

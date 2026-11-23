@@ -215,7 +215,7 @@ function openUser(user=null){
 }
 const botStateNames={starting:'Запускается',stopped:'Выключен',outside_schedule:'Ожидает расписания',no_plans:'Нет запланированных заявок',polling:'Проверяет заявки WB',waiting:'Ожидает следующей проверки',error:'Ошибка проверки',auth_error:'Требуется обновить токен'};
 function monitorTime(value){return value?new Date(value).toLocaleString('ru-RU',{timeZone:state.session.timeZone||'Asia/Yekaterinburg',hour12:false}):'—';}
-const logNames={api_error:'Ошибка API',api_recovered:'API восстановлен',observation_alert:'Уведомление без принятия',card_access_denied:'Нет доступа к карточке',worker_started:'Процесс мониторинга запущен',no_plans:'Нет активных планов',poll_started:'Начало проверки',request_started:'Запрос отправляется',response_received:'Ответ WB',request_completed:'Запрос завершён',request_failed:'Ошибка запроса',request_cancelled:'Запрос отменён',poll_completed:'Проверка завершена',poll_failed:'Ошибка проверки',snapshot_saved:'Ответ списка сохранён',acceptance_request:'Отправка принятия',acceptance_success:'Взята в работу',acceptance_error:'Ошибка принятия',curl_preview:'cURL — только текст'};
+const logNames={bot_enabled:'Бот запущен',bot_disabled:'Бот остановлен',api_error:'Ошибка API',api_recovered:'API восстановлен',observation_alert:'Уведомление без принятия',card_access_denied:'Нет доступа к карточке',worker_started:'Процесс мониторинга запущен',no_plans:'Нет активных планов',poll_started:'Начало проверки',request_started:'Запрос отправляется',response_received:'Ответ WB',request_completed:'Запрос завершён',request_failed:'Ошибка запроса',request_cancelled:'Запрос отменён',poll_completed:'Проверка завершена',poll_failed:'Ошибка проверки',snapshot_saved:'Ответ списка сохранён',acceptance_request:'Отправка принятия',acceptance_success:'Взята в работу',acceptance_error:'Ошибка принятия',curl_preview:'cURL — только текст'};
 function logSummary(e){const p=e.payload;if(p.message)return p.message;if(e.kind==='poll_started')return 'Маршруты: '+p.routes.join(', ')+' · интервал '+p.intervalSeconds+' сек.';if(e.kind==='poll_completed')return 'Создана: '+p.candidates+' · новых событий: '+p.newEvents+(p.deniedCards?' · без доступа: '+p.deniedCards:'');if(p.httpStatus)return 'HTTP '+p.httpStatus;if(p.durationMs!==undefined)return 'Длительность: '+p.durationMs+' мс';return p.message||p.previewNote||(p.snapshotId?'Снимок №'+p.snapshotId+' · заявка '+p.id:p.url)||'';}
 function renderBotRuntime(){
   if(!state.bot||!document.querySelector('#bot-runtime'))return;
@@ -377,6 +377,7 @@ function ringAcceptanceAlarm(){
  void acceptanceAudioPlayer.play(url,settings.volume??80,{loop:true}).catch(()=>{if(activeAcceptanceAlert===current){alarmFileFailed=true;fallbackAcceptanceAlarm();}});
 }
 async function pollAcceptanceAlerts(){
+ if(typeof navigator!=='undefined'&&navigator.userAgent.includes('MarshrutAndroid/'))return;
  const dialog=document.querySelector('#acceptance-alert-dialog');
  if(!state.user){stopAcceptanceAlarm();activeAcceptanceAlert=null;if(dialog?.open)dialog.close();return;}
  if(activeAcceptanceAlert&&activeAcceptanceAlert.userId!==state.user.id){stopAcceptanceAlarm();activeAcceptanceAlert=null;if(dialog.open)dialog.close();}

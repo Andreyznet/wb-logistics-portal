@@ -63,13 +63,14 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
       if(/^[78]\d{10}$/.test(String(supplierId)))fail(400,'В ID компании введён номер телефона. Нужен supplier_id из ответа WB, а не логин.');
       write('bot_token',secret);
       write('bot_config',{revision:current.revision+1,enabled:input.enabled,acceptanceEnabled,supplierId,intervalSeconds,requestsPerMinute:rate,scheduleEnabled:false,days:input.days,startTime:input.startTime,endTime:input.endTime,updatedAt:new Date().toISOString()});
+      if(current.enabled!==input.enabled)recordBotLog(input.enabled?'bot_enabled':'bot_disabled',{message:input.enabled?'Бот запущен.':'Бот остановлен.'});
       audit(actor.id,'bot_settings_updated',null,`Бот ${input.enabled?'включён':'выключен'}; опрос ${intervalSeconds} сек.; принятие ${acceptanceEnabled?'боевое':'только cURL'}; ID компании ${supplierId}; расписание ${input.scheduleEnabled?'включено':'выключено'}${supplied?'; токен заменён':input.clearToken?'; токен удалён':''}`);
       setBotRuntime(input.enabled?{state:'starting',nextPollAt:null,error:null,warning:null}:{state:'stopped',nextPollAt:null,error:null,warning:null});
       return getBotSettings(actor);
     });
   }
   function botConfig(){return {...defaults(),...read('bot_config',{}),acceptanceEnabled:true,token:decrypt(read('bot_token',null)),timeZone};}
-  function stopBot(reason){const config=read('bot_config',defaults());if(config.enabled){write('bot_config',{...config,enabled:false,revision:config.revision+1,updatedAt:new Date().toISOString()});audit(null,'bot_stopped',null,reason);}}
+  function stopBot(reason){const config=read('bot_config',defaults());if(config.enabled){write('bot_config',{...config,enabled:false,revision:config.revision+1,updatedAt:new Date().toISOString()});audit(null,'bot_stopped',null,reason);recordBotLog('bot_disabled',{message:reason||'Бот остановлен.'});}}
   function setBotRuntime(runtime){const old=read('bot_runtime',{});const value={...old,...runtime};if(JSON.stringify(old)!==JSON.stringify(value))write('bot_runtime',value);return value;}
   function getBotStatus(actor,summary=false){history.cleanupBotHistory();requireAdmin(actor);if(actor.role!=='super_admin')return {runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},events:[],logs:[],outcomes:[]};return {outcomes:(summary?[]:db.prepare('SELECT * FROM bot_acceptance_results').all()).map(r=>({...r,payload:JSON.parse(r.payload)})),serverVersion:'0.18.3',runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},logs:(summary?[]:db.prepare('SELECT * FROM bot_logs ORDER BY id DESC LIMIT 100').all()).map(row=>({...row,payload:JSON.parse(row.payload)})),events:(summary?[]:db.prepare('SELECT id,kind,payload,created_at FROM bot_events ORDER BY id DESC LIMIT 1000').all()).map(row=>({...row,payload:JSON.parse(row.payload)}))};}
   function recordBotCandidates(candidates,snapshot=null){return transaction(()=>{

@@ -5,7 +5,7 @@ import { createAcceptanceStore } from './acceptance-store.js';
 import { join, dirname } from 'node:path';
 
 const configuredSupplierId=()=>{const value=Number(process.env.SUPPLIER_ID||0);return Number.isSafeInteger(value)&&value>=0&&!/^[78]\d{10}$/.test(String(value))?value:0;};
-const defaults = () => ({ revision:0, enabled:false, acceptanceEnabled:false,supplierId:configuredSupplierId(),intervalSeconds:60, scheduleEnabled:false, days:[1,2,3,4,5], startTime:'08:00', endTime:'20:00', updatedAt:null });
+const defaults = () => ({ revision:0, enabled:false, acceptanceEnabled:true,supplierId:configuredSupplierId(),intervalSeconds:60, scheduleEnabled:false, days:[1,2,3,4,5], startTime:'08:00', endTime:'20:00', updatedAt:null });
 export function tokenExpiry(token) {
   try { const data=JSON.parse(Buffer.from(token.split('.')[1],'base64url').toString('utf8'));return Number.isFinite(data.exp)&&Number.isFinite(new Date(data.exp*1000).getTime()) ? new Date(data.exp*1000).toISOString() : null; } catch { return null; }
 }
@@ -23,13 +23,18 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
   const history=createBotHistory(db,fail);
   const read=(name,fallback)=>{const r=db.prepare('SELECT value FROM settings WHERE key=?').get(name);return r?JSON.parse(r.value):fallback;};
   const write=(name,value)=>db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(name,JSON.stringify(value));
+  if(!read('per_plan_acceptance_v1',false))transaction(()=>{
+    const old=read('bot_config',null);
+    if(old){const wasPreview=old.acceptanceEnabled!==true;write('bot_config',{...old,acceptanceEnabled:true,...(wasPreview?{enabled:false,revision:(old.revision||0)+1}:{})});if(wasPreview){write('bot_runtime',{state:'stopped',nextPollAt:null,warning:'Режим принятия перенесён в заявки. Проверьте галочки «Не брать в работу» и включите бота.'});audit(null,'bot_stopped',null,'После перехода на режимы заявок бот остановлен для проверки планов.');}}
+    write('per_plan_acceptance_v1',true);
+  });
   // Discard legacy phone values once, before any API consumer can use them as a supplier ID.
   const legacy=read('bot_config',null);
-  if(legacy&&/^[78]\d{10}$/.test(String(legacy.supplierId))){write('bot_config',{...legacy,supplierId:0,enabled:false,acceptanceEnabled:false,revision:(legacy.revision||0)+1});audit(null,'bot_settings_updated',null,'Удалён номер телефона из ID компании. Укажите supplier_id WB.');}
+  if(legacy&&/^[78]\d{10}$/.test(String(legacy.supplierId))){write('bot_config',{...legacy,supplierId:0,enabled:false,acceptanceEnabled:true,revision:(legacy.revision||0)+1});audit(null,'bot_settings_updated',null,'Удалён номер телефона из ID компании. Укажите supplier_id WB.');}
   function encrypt(value){const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',key,iv);const data=Buffer.concat([cipher.update(value,'utf8'),cipher.final()]);return{iv:iv.toString('base64'),tag:cipher.getAuthTag().toString('base64'),data:data.toString('base64')};}
   function decrypt(value){if(!value)return '';const cipher=createDecipheriv('aes-256-gcm',key,Buffer.from(value.iv,'base64'));cipher.setAuthTag(Buffer.from(value.tag,'base64'));return Buffer.concat([cipher.update(Buffer.from(value.data,'base64')),cipher.final()]).toString('utf8');}
   const requireAdmin=actor=>{if(!['admin','super_admin'].includes(actor?.role))fail(403,'Настройки бота доступны только менеджеру или администратору.');};
-  function getBotSettings(actor){requireAdmin(actor);const config={...defaults(),...read('bot_config',{})};const secret=read('bot_token',null);return {...config,requestsPerMinute:config.requestsPerMinute??Math.min(60,Math.max(1,Math.round(60/config.intervalSeconds))),timeZone,hasToken:Boolean(secret),tokenExpiresAt:secret?tokenExpiry(decrypt(secret)):null};}
+  function getBotSettings(actor){requireAdmin(actor);const config={...defaults(),...read('bot_config',{})};const secret=read('bot_token',null);return {...config,acceptanceEnabled:true,requestsPerMinute:config.requestsPerMinute??Math.min(60,Math.max(1,Math.round(60/config.intervalSeconds))),timeZone,hasToken:Boolean(secret),tokenExpiresAt:secret?tokenExpiry(decrypt(secret)):null};}
   function saveBotSettings(input,actor){
     requireAdmin(actor);
     if(typeof input.enabled!=='boolean'||typeof input.scheduleEnabled!=='boolean')fail(400,'Укажите состояние бота и расписания.');
@@ -48,13 +53,13 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
       const currentRate=current.requestsPerMinute??Math.min(60,Math.max(1,Math.round(60/current.intervalSeconds)));
       const frequencyChanged=input.requestsPerMinute===undefined?input.intervalSeconds!==current.intervalSeconds:rate!==currentRate;
       if(current.enabled&&!frequencyChanged)intervalSeconds=current.intervalSeconds;
-      if(current.enabled&&((supplied&&supplied!==decrypt(read('bot_token',null)))||input.clearToken||frequencyChanged||(input.acceptanceEnabled??current.acceptanceEnabled)!==current.acceptanceEnabled||(input.supplierId??current.supplierId)!==current.supplierId||input.scheduleEnabled||JSON.stringify(input.days)!==JSON.stringify(current.days)||input.startTime!==current.startTime||input.endTime!==current.endTime))fail(409,'Сначала выключите бота, чтобы изменить настройки.');
+      if(current.enabled&&((supplied&&supplied!==decrypt(read('bot_token',null)))||input.clearToken||frequencyChanged||(input.supplierId??current.supplierId)!==current.supplierId||input.scheduleEnabled||JSON.stringify(input.days)!==JSON.stringify(current.days)||input.startTime!==current.startTime||input.endTime!==current.endTime))fail(409,'Сначала выключите бота, чтобы изменить настройки.');
       const secret=input.clearToken?null:supplied?encrypt(supplied):read('bot_token',null);
       if(input.enabled&&!secret)fail(400,'Перед включением сохраните токен WB.');
       const exp=secret?tokenExpiry(decrypt(secret)):null;
       if(input.enabled&&exp&&Date.parse(exp)<=Date.now())fail(400,'Срок токена истёк. Введите новый токен.');
-      const acceptanceEnabled=input.acceptanceEnabled??current.acceptanceEnabled,supplierId=input.supplierId??current.supplierId;
-      if(typeof acceptanceEnabled!=='boolean'||!Number.isSafeInteger(supplierId)||supplierId<0||acceptanceEnabled&&supplierId===0)fail(400,'Для боевого режима укажите ID своего перевозчика (supplier_id).');
+      const acceptanceEnabled=true,supplierId=input.supplierId??current.supplierId;
+      if(typeof acceptanceEnabled!=='boolean'||!Number.isSafeInteger(supplierId)||supplierId<0||input.enabled&&supplierId===0&&db.prepare("SELECT id FROM requests WHERE status='waiting' AND observe_only=0 LIMIT 1").get())fail(400,'Для боевого режима укажите ID своего перевозчика (supplier_id).');
       if(/^[78]\d{10}$/.test(String(supplierId)))fail(400,'В ID компании введён номер телефона. Нужен supplier_id из ответа WB, а не логин.');
       write('bot_token',secret);
       write('bot_config',{revision:current.revision+1,enabled:input.enabled,acceptanceEnabled,supplierId,intervalSeconds,requestsPerMinute:rate,scheduleEnabled:false,days:input.days,startTime:input.startTime,endTime:input.endTime,updatedAt:new Date().toISOString()});
@@ -63,10 +68,10 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
       return getBotSettings(actor);
     });
   }
-  function botConfig(){return {...defaults(),...read('bot_config',{}),token:decrypt(read('bot_token',null)),timeZone};}
+  function botConfig(){return {...defaults(),...read('bot_config',{}),acceptanceEnabled:true,token:decrypt(read('bot_token',null)),timeZone};}
   function stopBot(reason){const config=read('bot_config',defaults());if(config.enabled){write('bot_config',{...config,enabled:false,revision:config.revision+1,updatedAt:new Date().toISOString()});audit(null,'bot_stopped',null,reason);}}
   function setBotRuntime(runtime){const old=read('bot_runtime',{});const value={...old,...runtime};if(JSON.stringify(old)!==JSON.stringify(value))write('bot_runtime',value);return value;}
-  function getBotStatus(actor,summary=false){history.cleanupBotHistory();requireAdmin(actor);if(actor.role!=='super_admin')return {runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},events:[],logs:[],outcomes:[]};return {outcomes:(summary?[]:db.prepare('SELECT * FROM bot_acceptance_results').all()).map(r=>({...r,payload:JSON.parse(r.payload)})),serverVersion:'0.17.2',runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},logs:(summary?[]:db.prepare('SELECT * FROM bot_logs ORDER BY id DESC LIMIT 100').all()).map(row=>({...row,payload:JSON.parse(row.payload)})),events:(summary?[]:db.prepare('SELECT id,kind,payload,created_at FROM bot_events ORDER BY id DESC LIMIT 1000').all()).map(row=>({...row,payload:JSON.parse(row.payload)}))};}
+  function getBotStatus(actor,summary=false){history.cleanupBotHistory();requireAdmin(actor);if(actor.role!=='super_admin')return {runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},events:[],logs:[],outcomes:[]};return {outcomes:(summary?[]:db.prepare('SELECT * FROM bot_acceptance_results').all()).map(r=>({...r,payload:JSON.parse(r.payload)})),serverVersion:'0.18.0',runtime:read('bot_config',defaults()).enabled?read('bot_runtime',{state:'starting'}):{...read('bot_runtime',{}),state:'stopped',nextPollAt:null},logs:(summary?[]:db.prepare('SELECT * FROM bot_logs ORDER BY id DESC LIMIT 100').all()).map(row=>({...row,payload:JSON.parse(row.payload)})),events:(summary?[]:db.prepare('SELECT id,kind,payload,created_at FROM bot_events ORDER BY id DESC LIMIT 1000').all()).map(row=>({...row,payload:JSON.parse(row.payload)}))};}
   function recordBotCandidates(candidates,snapshot=null){return transaction(()=>{
     const old=new Map(db.prepare('SELECT * FROM bot_observations').all().map(row=>[row.id,row]));
     db.exec('UPDATE bot_observations SET active=0');
@@ -93,13 +98,24 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
       }
     };if(inTransaction)persist();else transaction(persist);return {kind,payload,created_at:at};
   }
+  function notifyObservedCandidate(candidate,today){return transaction(()=>{
+    const plans=db.prepare("SELECT * FROM requests WHERE status='waiting' AND observe_only=1 AND route_id=? AND service_date<=?").all(candidate.routeId,today);
+    let delivered=0;
+    for(const plan of plans){
+      const notice={observed:true,id:candidate.id,planId:plan.id,routeId:plan.route_id,routeName:candidate.routeName||'',carDt:candidate.carDt,driver:plan.driver_label,vehicle:plan.vehicle_label,trailer:plan.trailer_label||null,message:'Найдена подходящая заявка. Режим «Не брать в работу»: запрос принятия не отправлялся.'};
+      const key=-parseInt(createHash('sha256').update('observe:'+plan.id+':'+candidate.id).digest('hex').slice(0,12),16);
+      const recipients=db.prepare('SELECT id,name FROM users WHERE id=? OR id IN (SELECT user_id FROM request_watchers WHERE request_id=?)').all(plan.created_by,plan.id),author=recipients.find(u=>u.id===plan.created_by)?.name||'';
+      for(const recipient of recipients){const result=db.prepare('INSERT OR IGNORE INTO acceptance_alerts(user_id,request_id,payload,created_at) VALUES(?,?,?,?)').run(recipient.id,key,JSON.stringify({...notice,watching:recipient.id!==plan.created_by,author}),new Date().toISOString());delivered+=Number(result.changes);}
+    }
+    if(delivered)recordBotLog('observation_alert',{id:candidate.id,routeId:candidate.routeId,message:'Найдена заявка: уведомлены авторы и подписчики планов «Не брать в работу». PUT не отправлялся для этих планов.'});return delivered;
+  });}
   function userAlerts(actor){if(!actor?.id)fail(401,'Войдите в аккаунт.');return db.prepare('SELECT id,payload,created_at FROM acceptance_alerts WHERE user_id=? AND ack_at IS NULL ORDER BY id LIMIT 30').all(actor.id).map(r=>({...r,payload:JSON.parse(r.payload)}));}
   function acknowledgeAlert(id,actor){if(!actor?.id)fail(401,'Войдите в аккаунт.');const row=db.prepare('SELECT id FROM acceptance_alerts WHERE id=? AND user_id=?').get(id,actor.id);if(!row)fail(404,'Уведомление не найдено.');db.prepare('UPDATE acceptance_alerts SET ack_at=COALESCE(ack_at,?) WHERE id=?').run(new Date().toISOString(),id);return {ok:true};}
   function createTestAlert(planId,actor){
     requireAdmin(actor);let plan=null;
     if(planId!=null){if(!Number.isSafeInteger(planId)||planId<1)fail(400,'Выберите план.');plan=db.prepare('SELECT * FROM requests WHERE id=?').get(planId);if(!plan)fail(404,'План не найден.');}
     const userId=plan?.created_by||actor.id,owner=db.prepare('SELECT name FROM users WHERE id=?').get(userId);
-    const payload={test:true,id:'ТЕСТ',planId:plan?.id||'—',routeId:plan?.route_id||61373,routeName:'Проверка уведомления — заявка WB не принималась',carDt:new Date().toISOString(),driver:plan?.driver_label||'Тестовый водитель',vehicle:plan?.vehicle_label||'Тестовый автомобиль',trailer:plan?.trailer_label||null};
+    const payload={test:true,observed:Boolean(plan?.observe_only),id:'ТЕСТ',planId:plan?.id||'—',routeId:plan?.route_id||61373,routeName:'Проверка уведомления — заявка WB не принималась',carDt:new Date().toISOString(),driver:plan?.driver_label||'Тестовый водитель',vehicle:plan?.vehicle_label||'Тестовый автомобиль',trailer:plan?.trailer_label||null};
     const result=db.prepare('INSERT INTO acceptance_alerts(user_id,request_id,payload,created_at) VALUES(?,?,?,?)').run(userId,-randomBytes(6).readUIntBE(0,6),JSON.stringify(payload),new Date().toISOString());
     audit(actor.id,'test_alert_created',plan?.id||null,'Тест звука и окна для '+owner.name);return {id:Number(result.lastInsertRowid),recipient:owner.name};
   }
@@ -108,6 +124,6 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
     return transaction(()=>{const event=db.prepare('SELECT payload FROM bot_events WHERE id=?').get(id);if(!event)fail(404,'Запись не найдена.');const payload=JSON.parse(event.payload);db.prepare('DELETE FROM bot_events WHERE id=?').run(id);db.prepare('UPDATE bot_observations SET active=0 WHERE id=?').run(payload.id);audit(actor.id,'bot_event_deleted',null,'Запись '+id+', заявка WB '+payload.id+'; история попыток сохранена.');return {ok:true,requestId:payload.id};});
   }
   const acceptanceStore=createAcceptanceStore({db,transaction,botConfig,recordAcceptanceResult,audit,fail});
-  return {...history,...acceptanceStore,deleteBotEvent,createTestAlert,userAlerts,acknowledgeAlert,recordAcceptanceResult,getBotSnapshot,recordBotLog,getBotSettings,saveBotSettings,botConfig,stopBot,setBotRuntime,getBotStatus,recordBotCandidates};
+  return {notifyObservedCandidate,...history,...acceptanceStore,deleteBotEvent,createTestAlert,userAlerts,acknowledgeAlert,recordAcceptanceResult,getBotSnapshot,recordBotLog,getBotSettings,saveBotSettings,botConfig,stopBot,setBotRuntime,getBotStatus,recordBotCandidates};
 }
 

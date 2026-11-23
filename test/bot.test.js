@@ -19,7 +19,7 @@ function config(store,admin,extra={}){
 }
 function addPlan(store,admin){
   store.importDirectory({transport:{drivers:[{id:1,name:'Driver'}],vehicles:[{id:2,name:'Vehicle'}],trailers:[]}},admin.id);
-  store.saveRequest({routeId:61373,serviceDate:businessDate(),driverId:1,vehicleId:2,trailerId:null,priority:1},admin);
+  store.saveRequest({routeId:61373,serviceDate:businessDate(),driverId:1,vehicleId:2,trailerId:null,priority:1,observeOnly:true},admin);
 }
 test('default settings, validation and admin-only access protect bot configuration',()=>{
   const{store,admin}=init();try{
@@ -170,7 +170,7 @@ test('legacy phone in company ID is removed before WB requests and cannot be sav
  const bad={...store.getBotSettings(admin),supplierId:79025981410,enabled:true,acceptanceEnabled:true};store.db.prepare("INSERT INTO settings(key,value) VALUES('bot_config',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(bad));
  // Recreate the bot store against the same database, as on process restart.
  const migrated=createBotStore({db:store.db,file:':memory:',timeZone:store.timeZone,audit:()=>{},transaction:fn=>fn(),fail:(status,message)=>{throw new Error(message);}});
- assert.equal(migrated.botConfig().supplierId,0);assert.equal(migrated.botConfig().enabled,false);assert.equal(migrated.botConfig().acceptanceEnabled,false);
+ assert.equal(migrated.botConfig().supplierId,0);assert.equal(migrated.botConfig().enabled,false);assert.equal(migrated.botConfig().acceptanceEnabled,true);
  assert.throws(()=>migrated.saveBotSettings({...migrated.getBotSettings(admin),supplierId:79025981410},admin),/телефона/);
  }finally{store.close();}
 });

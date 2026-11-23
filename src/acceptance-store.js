@@ -3,7 +3,7 @@ export function createAcceptanceStore({db,transaction,botConfig,recordAcceptance
  const pending=()=>db.prepare("SELECT * FROM acceptance_attempts WHERE state IN ('pending','uncertain')").all().map(row=>({...row,expected:JSON.parse(row.expected)}));
  function claim(id,plan,now){return transaction(()=>{
   const config=botConfig(),fresh=db.prepare('SELECT * FROM requests WHERE id=?').get(plan.id);
-  if(!config.enabled||!config.acceptanceEnabled||!fresh||fresh.status!=='waiting'||fresh.version!==plan.version)return null;
+  if(!config.enabled||!fresh||fresh.status!=='waiting'||fresh.observe_only||config.supplierId<=0||fresh.version!==plan.version)return null;
   if(fresh.trailer_id)return null;
   const old=db.prepare('SELECT * FROM acceptance_attempts WHERE id=?').get(id);
   if(old&&(old.state!=='failed'||old.tries>=3||old.retry_at>now))return null;
@@ -18,7 +18,7 @@ export function createAcceptanceStore({db,transaction,botConfig,recordAcceptance
   const finalState=result.kind==='acceptance_success'?'success':state;
   db.prepare('UPDATE acceptance_attempts SET state=?,updated_at=?,retry_at=?,response=? WHERE id=?').run(finalState,now,now+retryDelay,JSON.stringify({httpStatus,response}),id);
    if(finalState==='success'){
-    db.prepare("UPDATE requests SET status='paused',version=version+1,updated_at=? WHERE status='waiting' AND (id=? OR driver_id=? OR vehicle_id=?)").run(new Date(now).toISOString(),expected.planId,expected.driverId,expected.vehicleId);
+    db.prepare("UPDATE requests SET status='paused',version=version+1,updated_at=? WHERE status='waiting' AND observe_only=0 AND (id=? OR driver_id=? OR vehicle_id=?)").run(new Date(now).toISOString(),expected.planId,expected.driverId,expected.vehicleId);
     audit(null,'request_accepted',expected.planId,'Заявка WB №'+id+' принята; планы этого экипажа приостановлены.');
    }
   return finalState;});

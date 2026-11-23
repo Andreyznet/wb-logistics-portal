@@ -38,6 +38,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     CREATE INDEX IF NOT EXISTS requests_date_status ON requests(service_date,status);
     CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id), action TEXT NOT NULL, request_id INTEGER, detail TEXT NOT NULL, created_at TEXT NOT NULL);
   `);
+  if(!db.prepare('PRAGMA table_info(requests)').all().some(c=>c.name==='observe_only'))db.exec('ALTER TABLE requests ADD COLUMN observe_only INTEGER NOT NULL DEFAULT 0 CHECK(observe_only IN (0,1))');
   const userSchema=db.prepare("SELECT sql FROM sqlite_master WHERE name='users'").get().sql;
   if(!userSchema.includes("'super_admin'")){
     db.exec("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE;");
@@ -186,6 +187,8 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     return row.label;
   }
   function validateRequest(input, old) {
+    const observeOnly=input.observeOnly??Boolean(old?.observe_only);
+    if(typeof observeOnly!=='boolean')fail(400,'Укажите корректный режим «Не брать в работу».');
     const routeId = integer(input.routeId);
     const date = input.serviceDate;
     const priority = integer(input.priority ?? 1);
@@ -196,12 +199,13 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     if (date < businessDate(timeZone) && date !== old?.service_date) fail(400, 'Дата подачи не может быть в прошлом.');
     if (!priority || priority > 99) fail(400, 'Приоритет должен быть от 1 до 99.');
     if (!driverId || !vehicleId || input.trailerId && !trailerId) fail(400, 'Выберите водителя, автомобиль и корректный прицеп.');
-    return { routeId, date, priority, driverId, vehicleId, trailerId,
+    return { observeOnly,routeId, date, priority, driverId, vehicleId, trailerId,
       driverLabel: entry('driver', driverId), vehicleLabel: entry('vehicle', vehicleId),
       trailerLabel: trailerId ? entry('trailer', trailerId) : null, note: clean(input.note, 1000) };
   }
   function checkBusy(value, excludeId = 0) {
-    const conflict = db.prepare(`SELECT id,driver_id,vehicle_id,trailer_id FROM requests WHERE status='waiting' AND service_date=? AND id<>? AND (driver_id=? OR vehicle_id=? OR (? IS NOT NULL AND trailer_id=?)) LIMIT 1`).get(value.date, excludeId, value.driverId, value.vehicleId, value.trailerId, value.trailerId);
+    if(value.observeOnly)return;
+    const conflict = db.prepare(`SELECT id,driver_id,vehicle_id,trailer_id FROM requests WHERE status='waiting' AND observe_only=0 AND service_date=? AND id<>? AND (driver_id=? OR vehicle_id=? OR (? IS NOT NULL AND trailer_id=?)) LIMIT 1`).get(value.date, excludeId, value.driverId, value.vehicleId, value.trailerId, value.trailerId);
     if (conflict) {
       const resource = conflict.driver_id === value.driverId ? 'Водитель' : conflict.vehicle_id === value.vehicleId ? 'Автомобиль' : 'Прицеп';
       fail(409, `${resource} уже запланирован на эту дату в заявке №${conflict.id}.`);
@@ -213,15 +217,16 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
       const old = id ? getRequest(id) : null;
       if (id && !old) fail(404, 'Заявка не найдена.');
       if (old && db.prepare("SELECT id FROM acceptance_attempts WHERE plan_id=? AND state='success'").get(id)) fail(409, 'Обработанную заявку нельзя редактировать.');
+      if(old&&db.prepare("SELECT id FROM acceptance_attempts WHERE plan_id=? AND state IN ('pending','uncertain')").get(id))fail(409,'Результат принятия ещё проверяется. Дождитесь подтверждения перед редактированием.');
       if (old?.status === 'archived') fail(409, 'Заявка в архиве.');
       if (old && Number(input.version) !== old.version) fail(409, 'Заявка уже изменена другим логистом. Обновите список.');
       const v = validateRequest(input, old);
       if (!old || old.status === 'waiting') checkBusy(v, id || 0);
       const at = now();
       if (old) {
-        db.prepare('UPDATE requests SET route_id=?,service_date=?,priority=?,driver_id=?,vehicle_id=?,trailer_id=?,driver_label=?,vehicle_label=?,trailer_label=?,note=?,version=version+1,updated_at=? WHERE id=?').run(v.routeId,v.date,v.priority,v.driverId,v.vehicleId,v.trailerId,v.driverLabel,v.vehicleLabel,v.trailerLabel,v.note,at,id);
+        db.prepare('UPDATE requests SET observe_only=?,route_id=?,service_date=?,priority=?,driver_id=?,vehicle_id=?,trailer_id=?,driver_label=?,vehicle_label=?,trailer_label=?,note=?,version=version+1,updated_at=? WHERE id=?').run(Number(v.observeOnly),v.routeId,v.date,v.priority,v.driverId,v.vehicleId,v.trailerId,v.driverLabel,v.vehicleLabel,v.trailerLabel,v.note,at,id);
       } else {
-        id = Number(db.prepare("INSERT INTO requests(route_id,service_date,priority,driver_id,vehicle_id,trailer_id,driver_label,vehicle_label,trailer_label,note,status,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,'waiting',?,?,?)").run(v.routeId,v.date,v.priority,v.driverId,v.vehicleId,v.trailerId,v.driverLabel,v.vehicleLabel,v.trailerLabel,v.note,actor.id,at,at).lastInsertRowid);
+        id = Number(db.prepare("INSERT INTO requests(observe_only,route_id,service_date,priority,driver_id,vehicle_id,trailer_id,driver_label,vehicle_label,trailer_label,note,status,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,'waiting',?,?,?)").run(Number(v.observeOnly),v.routeId,v.date,v.priority,v.driverId,v.vehicleId,v.trailerId,v.driverLabel,v.vehicleLabel,v.trailerLabel,v.note,actor.id,at,at).lastInsertRowid);
       }
       audit(actor.id, old ? 'request_updated' : 'request_created', id, `Маршрут ${v.routeId}, ${v.date}`);
       return getRequest(id);

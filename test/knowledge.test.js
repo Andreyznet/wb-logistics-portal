@@ -8,7 +8,7 @@ test('knowledge inherits instructions by role and keeps token and diagnostics gu
  assert.ok(logist.some(a=>a.id==='create'));assert.ok(logist.some(a=>a.id==='watch'));
  assert.ok(!logist.some(a=>a.id==='token'));assert.ok(manager.some(a=>a.id==='token'&&a.steps.length>=7));
  assert.ok(!manager.some(a=>a.id==='admin-diagnostics'));assert.ok(admin.some(a=>a.id==='admin-diagnostics'));
- const token=manager.find(a=>a.id==='token');assert.match(token.steps[3],/transport-requests\?filter=TO_DELIVERY/);assert.match(token.steps[4],/Request headers/);assert.match(token.steps[5],/Copy value/);assert.equal(token.illustrations[0].step,6);assert.ok(!JSON.stringify(token).includes('token/merge'));
+ const token=manager.find(a=>a.id==='token');assert.match(token.steps[3],/главной странице/);assert.match(token.steps[3],/user-management\/api\/v2\/public\/user\/profile/);assert.match(token.steps[2],/Fetch\/XHR/);assert.match(token.steps[4],/Request headers/);assert.match(token.steps[5],/Copy value/);assert.equal(token.illustrations[0].step,6);assert.ok(!JSON.stringify(token).includes('token/merge'));
  for(const role of ['logist','admin','super_admin']){const rows=knowledgeFor(role);assert.equal(new Set(rows.map(a=>a.id)).size,rows.length);assert.ok(rows.every(a=>a.paragraphs.length>0));}
  assert.deepEqual(knowledgeFor('unknown'),[]);
 });

@@ -12,6 +12,7 @@ export function registerPush(store,device,input){
  store.db.prepare('UPDATE mobile_devices SET push_token=?,push_enabled=? WHERE id=?').run(input.token,input.enabled?1:0,device.id);
  // A phone connecting after an assignment still receives its unacknowledged queue.
  store.db.prepare("INSERT OR IGNORE INTO fcm_outbox(device_id,event_key,kind,created_at) SELECT ?, 'alert:'||a.id,'alert',? FROM acceptance_alerts a WHERE a.user_id=? AND (a.created_at>=? OR a.ack_at IS NULL) AND NOT EXISTS(SELECT 1 FROM mobile_alert_receipts r WHERE r.device_id=? AND r.alert_id=a.id)").run(device.id,Date.now(),device.user_id,device.registered_at,device.id);
+ store.db.prepare('UPDATE mobile_devices SET device_name=?,app_version=? WHERE id=?').run(String(input.deviceName||device.device_name||'Android').slice(0,100),String(input.appVersion||device.app_version||'').slice(0,30),device.id);
  return {registered:true};
 }
 export function googleSender(file,projectId,fetchImpl=fetch){
@@ -27,7 +28,7 @@ export function googleSender(file,projectId,fetchImpl=fetch){
    const body=await response.json();if(!response.ok||typeof body.access_token!=='string')throw new Error('FCM_AUTH_HTTP_'+response.status);
    access=body.access_token;expires=Date.now()+Math.max(0,Number(body.expires_in||3600)-60)*1000;
   }
-  const response=await fetchImpl('https://fcm.googleapis.com/v1/projects/'+project+'/messages:send',{method:'POST',signal:AbortSignal.timeout(15000),headers:{Authorization:'Bearer '+access,'Content-Type':'application/json'},body:JSON.stringify({message:{token,data,android:{priority:'HIGH',ttl:'3600s'}}})});
+  const response=await fetchImpl('https://fcm.googleapis.com/v1/projects/'+project+'/messages:send',{method:'POST',signal:AbortSignal.timeout(15000),headers:{Authorization:'Bearer '+access,'Content-Type':'application/json'},body:JSON.stringify({message:{token,data,android:{priority:'HIGH',ttl:data.kind==='access_revoked'?'2419200s':'3600s'}}})});
   let body={};try{body=await response.json();}catch{}
   if(response.ok)return;
   if(response.status===401)expires=0;
@@ -50,7 +51,7 @@ export class FcmDispatcher {
    const alerts=db.prepare('SELECT id,user_id FROM acceptance_alerts WHERE id>? ORDER BY id LIMIT 200').all(read('fcm_alert_cursor'));
    const logs=db.prepare('SELECT id,kind,payload FROM bot_logs WHERE id>? ORDER BY id LIMIT 500').all(read('fcm_log_cursor'));
    const insert=db.prepare('INSERT OR IGNORE INTO fcm_outbox(device_id,event_key,kind,created_at) VALUES(?,?,?,?)');
-   const devices=db.prepare('SELECT id,user_id FROM mobile_devices WHERE push_token IS NOT NULL AND push_enabled=1 AND expires_at>?').all(now);
+   const devices=db.prepare('SELECT d.id,d.user_id FROM mobile_devices d JOIN users u ON u.id=d.user_id WHERE d.push_token IS NOT NULL AND d.push_enabled=1 AND d.expires_at>? AND u.blocked=0 AND d.revoked_at IS NULL').all(now);
    for(const a of alerts)for(const d of devices)if(d.user_id===a.user_id)insert.run(d.id,'alert:'+a.id,'alert',now);
    for(const log of logs){if(!['bot_enabled','bot_disabled','poll_failed','api_error','api_recovered'].includes(log.kind))continue;const p=JSON.parse(log.payload);if(['api_error','api_recovered'].includes(log.kind)&&p.notify!==true)continue;for(const d of devices)insert.run(d.id,'log:'+log.id,log.kind,now);}
    if(alerts.length)write('fcm_alert_cursor',alerts.at(-1).id);if(logs.length)write('fcm_log_cursor',logs.at(-1).id);
@@ -61,9 +62,10 @@ export class FcmDispatcher {
   if(!this.enabled||this.busy)return;this.busy=true;
   try{
    this.scan();const db=this.store.db;
-   const jobs=db.prepare('SELECT o.*,d.push_token FROM fcm_outbox o JOIN mobile_devices d ON d.id=o.device_id WHERE o.sent_at IS NULL AND o.retry_at<=? AND d.push_enabled=1 AND d.push_token IS NOT NULL AND d.expires_at>? ORDER BY o.id LIMIT 20').all(this.clock(),this.clock());
+   const jobs=db.prepare("SELECT o.*,d.push_token FROM fcm_outbox o JOIN mobile_devices d ON d.id=o.device_id JOIN users u ON u.id=d.user_id WHERE o.sent_at IS NULL AND o.retry_at<=? AND d.push_token IS NOT NULL AND ((o.kind='access_revoked' AND o.event_key='revoke:'||d.token_hash) OR (o.kind<>'access_revoked' AND d.push_enabled=1 AND d.expires_at>? AND u.blocked=0 AND d.revoked_at IS NULL)) ORDER BY CASE WHEN o.kind='access_revoked' THEN 0 ELSE 1 END,o.id LIMIT 20").all(this.clock(),this.clock());
    for(const job of jobs)try{
-    await this.send(job.push_token,{event:job.event_key,kind:job.kind});db.prepare('UPDATE fcm_outbox SET sent_at=? WHERE id=?').run(this.clock(),job.id);
+    if(job.kind!=='access_revoked'&&!db.prepare('SELECT d.id FROM mobile_devices d JOIN users u ON u.id=d.user_id WHERE d.id=? AND d.revoked_at IS NULL AND u.blocked=0').get(job.device_id))continue;
+    await this.send(job.push_token,{event:job.event_key,kind:job.kind,...(job.kind==='access_revoked'?{accessHash:job.event_key.slice(7)}:{})});db.prepare('UPDATE fcm_outbox SET sent_at=? WHERE id=?').run(this.clock(),job.id);
    }catch(error){
     if(error.unregistered){db.prepare('UPDATE mobile_devices SET push_token=NULL WHERE id=? AND push_token=?').run(job.device_id,job.push_token);db.prepare('UPDATE fcm_outbox SET sent_at=? WHERE id=?').run(this.clock(),job.id);}
     else db.prepare('UPDATE fcm_outbox SET attempts=attempts+1,retry_at=? WHERE id=?').run(this.clock()+Math.min(3600000,1000*2**Math.min(job.attempts+1,12)),job.id);

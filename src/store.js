@@ -44,6 +44,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     db.exec("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE;");
     try{db.exec("CREATE TABLE users_roles(id INTEGER PRIMARY KEY,username TEXT UNIQUE NOT NULL,name TEXT NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('super_admin','admin','logist')),created_at TEXT NOT NULL); INSERT INTO users_roles SELECT * FROM users; UPDATE users_roles SET role='super_admin' WHERE id=(SELECT min(id) FROM users_roles WHERE role='admin'); DROP TABLE users; ALTER TABLE users_roles RENAME TO users; COMMIT;");}catch(e){db.exec('ROLLBACK');throw e;}finally{db.exec('PRAGMA foreign_keys=ON');}
   }
+  if(!db.prepare('PRAGMA table_info(users)').all().some(c=>c.name==='blocked'))db.exec('ALTER TABLE users ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0');
   db.exec('CREATE TABLE IF NOT EXISTS user_avatars(user_id INTEGER PRIMARY KEY REFERENCES users(id),preset TEXT,image BLOB,mime TEXT,revision TEXT NOT NULL)');
   db.exec("CREATE TABLE IF NOT EXISTS user_notification_settings(user_id INTEGER PRIMARY KEY REFERENCES users(id),sound_id TEXT NOT NULL,volume INTEGER NOT NULL)");
   const notificationSettings=id=>{const saved=db.prepare('SELECT sound_id,volume FROM user_notification_settings WHERE user_id=?').get(id);return {soundId:saved?.sound_id||'digital-alarm',volume:saved?.volume??80};};
@@ -56,7 +57,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     try { const result = fn(); db.exec('COMMIT'); return result; }
     catch (error) { db.exec('ROLLBACK'); throw error; }
   }
-  const publicUser = row => row ? { id: row.id, username: row.username, name: row.name, role: row.role, notificationSettings:notificationSettings(row.id), avatar:avatarUrl(row.id) } : null;
+  const publicUser = row => row ? { id: row.id, username: row.username, name: row.name, role: row.role, blocked:Boolean(row.blocked), notificationSettings:notificationSettings(row.id), avatar:avatarUrl(row.id) } : null;
   function audit(userId, action, requestId = null, detail = '') {
     db.prepare('INSERT INTO audit(user_id,action,request_id,detail,created_at) VALUES(?,?,?,?,?)').run(userId, action, requestId, detail, now());
   }
@@ -117,6 +118,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     const row = db.prepare('SELECT * FROM users WHERE username=?').get(clean(username, 64).toLowerCase());
     const good = passwordMatches(typeof password === 'string' ? password.slice(0, 200) : '', row?.password_hash || dummyHash);
     if (!row || !good) fail(401, 'Неверный логин или пароль.');
+    if(row.blocked)fail(403,'Учётная запись заблокирована администратором.');
     return publicUser(row);
   }
   function createSession(userId) {
@@ -127,7 +129,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
   }
   function session(token) {
     if (!token || token.length > 200) return null;
-    return publicUser(db.prepare('SELECT u.* FROM users u JOIN sessions s ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?').get(hashSession(token), Date.now()));
+    return publicUser(db.prepare('SELECT u.* FROM users u JOIN sessions s ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.blocked=0').get(hashSession(token), Date.now()));
   }
   function importDirectory(input, actorId = null) {
     const source = input?.transport ?? input?.data;
@@ -262,7 +264,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
   const botStore=createBotStore({db,file,timeZone,audit,transaction,fail});
   return { notificationSettings,saveNotificationSettings,...botStore, db, timeZone, userCount, addUser, updateUser, saveAvatar, getAvatar, login, createSession, session, importDirectory, catalog, catalogSummary, catalogPage, cacheCatalogRows, saveRequest, changeStatus, watchRequest,
     logout: token => db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hashSession(token || '')),
-    users: () => db.prepare('SELECT id,username,name,role,created_at FROM users ORDER BY name').all().map(user=>({...user,avatar:avatarUrl(user.id)})),
+    users: () => db.prepare('SELECT id,username,name,role,created_at,blocked FROM users ORDER BY name').all().map(user=>({...user,avatar:avatarUrl(user.id)})),
     requests: (actor=null) => db.prepare("SELECT r.*,u.name AS created_by_name,EXISTS(SELECT 1 FROM request_watchers w WHERE w.request_id=r.id AND w.user_id=?) AS watching,(SELECT a.id FROM acceptance_attempts a WHERE a.plan_id=r.id AND a.state='success' ORDER BY a.updated_at DESC LIMIT 1) AS accepted_wb_id FROM requests r JOIN users u ON r.created_by=u.id ORDER BY r.service_date,r.priority,r.id").all(actor?.id||0),
     activity: () => db.prepare('SELECT a.*,u.name AS actor FROM audit a LEFT JOIN users u ON a.user_id=u.id ORDER BY a.id DESC LIMIT 200').all(),
     close: () => db.close(),

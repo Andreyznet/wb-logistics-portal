@@ -1,17 +1,20 @@
 import {createHash,randomBytes} from 'node:crypto';
 import {apiIncident} from './api-monitor.js';
-export function initMobile(store){store.db.exec(`CREATE TABLE IF NOT EXISTS mobile_devices(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),installation_id TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,registered_at TEXT NOT NULL,expires_at INTEGER NOT NULL,UNIQUE(user_id,installation_id)); CREATE TABLE IF NOT EXISTS mobile_alert_receipts(device_id INTEGER NOT NULL REFERENCES mobile_devices(id) ON DELETE CASCADE,alert_id INTEGER NOT NULL REFERENCES acceptance_alerts(id) ON DELETE CASCADE,acked_at TEXT NOT NULL,PRIMARY KEY(device_id,alert_id));`);}
+export function initMobile(store){store.db.exec(`CREATE TABLE IF NOT EXISTS mobile_devices(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),installation_id TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,registered_at TEXT NOT NULL,expires_at INTEGER NOT NULL,UNIQUE(user_id,installation_id)); CREATE TABLE IF NOT EXISTS mobile_alert_receipts(device_id INTEGER NOT NULL REFERENCES mobile_devices(id) ON DELETE CASCADE,alert_id INTEGER NOT NULL REFERENCES acceptance_alerts(id) ON DELETE CASCADE,acked_at TEXT NOT NULL,PRIMARY KEY(device_id,alert_id));`);for(const [name,type]of [['last_seen_at','TEXT'],['last_ui_at','TEXT'],['foreground','INTEGER NOT NULL DEFAULT 0'],['device_name',"TEXT NOT NULL DEFAULT ''"],['app_version',"TEXT NOT NULL DEFAULT ''"],['revoked_at','TEXT']])if(!store.db.prepare('PRAGMA table_info(mobile_devices)').all().some(c=>c.name===name))store.db.exec('ALTER TABLE mobile_devices ADD COLUMN '+name+' '+type);}
 const hash=value=>createHash('sha256').update(value).digest('hex');
-export function connectMobile(store,user,installationId){
+export function connectMobile(store,user,installationId,metadata={}){
  if(typeof installationId!=='string'||!/^[a-zA-Z0-9_-]{16,100}$/.test(installationId)){const error=new Error('Некорректное устройство.');error.status=400;throw error;}
+ if(store.db.prepare('SELECT blocked FROM users WHERE id=?').get(user.id)?.blocked){const e=new Error('Учётная запись заблокирована.');e.status=403;throw e;}
  const token=randomBytes(32).toString('base64url'),now=new Date().toISOString();
  store.db.prepare('DELETE FROM mobile_devices WHERE installation_id=? AND user_id<>?').run(installationId,user.id);
  store.db.prepare('INSERT INTO mobile_devices(user_id,installation_id,token_hash,registered_at,expires_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id,installation_id) DO UPDATE SET token_hash=excluded.token_hash,expires_at=excluded.expires_at').run(user.id,installationId,hash(token),now,Date.now()+30*86400000);
+ store.db.prepare('UPDATE mobile_devices SET revoked_at=NULL,last_seen_at=?,device_name=?,app_version=? WHERE user_id=? AND installation_id=?').run(now,String(metadata.deviceName||'Android').slice(0,100),String(metadata.appVersion||'').slice(0,30),user.id,installationId);
  return {token,userId:user.id,cursor:store.db.prepare('SELECT COALESCE(MAX(id),0) AS id FROM bot_logs').get().id};
 }
 export function mobileDevice(store,authorization){
  const token=/^Bearer ([A-Za-z0-9_-]{43})$/.exec(authorization||'')?.[1];if(!token)return null;
- const row=store.db.prepare('SELECT d.*,u.name,u.role FROM mobile_devices d JOIN users u ON u.id=d.user_id WHERE token_hash=? AND expires_at>?').get(hash(token),Date.now());
+ const row=store.db.prepare('SELECT d.*,u.name,u.role FROM mobile_devices d JOIN users u ON u.id=d.user_id WHERE token_hash=? AND expires_at>? AND u.blocked=0 AND d.revoked_at IS NULL').get(hash(token),Date.now());
+ if(row)store.db.prepare('UPDATE mobile_devices SET last_seen_at=? WHERE id=?').run(new Date().toISOString(),row.id);
  return row?{...row,user:{id:row.user_id,name:row.name,role:row.role}}:null;
 }
 export function mobileAlerts(store,user,device){
@@ -39,6 +42,8 @@ export async function waitMobile(store,user,query,device,signal){
  const seconds=Number(query.wait||0);if(!Number.isInteger(seconds)||seconds<0||seconds>25){const e=new Error('Некорректное ожидание.');e.status=400;throw e;}
  const until=Date.now()+seconds*1000;
  while(!signal.aborted){
+  if(device&&!store.db.prepare('SELECT d.id FROM mobile_devices d JOIN users u ON u.id=d.user_id WHERE d.id=? AND d.token_hash=? AND d.expires_at>? AND d.revoked_at IS NULL AND u.blocked=0').get(device.id,device.token_hash,Date.now())){const e=new Error('Доступ отозван.');e.status=401;throw e;}
+
   const result=mobileSync(store,user,query,device);
   if(!seconds||!query.revision||result.revision!==query.revision||result.events.length||result.hasMore||Date.now()>=until)return result;
   await new Promise(resolve=>{const done=()=>{clearTimeout(timer);signal.removeEventListener('abort',done);resolve();};const timer=setTimeout(done,200);signal.addEventListener('abort',done,{once:true});});

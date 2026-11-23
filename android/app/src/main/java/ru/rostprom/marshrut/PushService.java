@@ -7,7 +7,9 @@ import java.util.Map;
 public final class PushService extends FirebaseMessagingService {
     @Override public void onNewToken(String token){PushRegistration.save(this,token);}
     @Override public void onMessageReceived(RemoteMessage message){
-        DeviceAuth.init(this);if(!Prefs.enabled(this)||DeviceAuth.token().isEmpty())return;
+        DeviceAuth.init(this);
+        if("access_revoked".equals(message.getData().get("kind"))){String credential=DeviceAuth.token();if(!credential.isEmpty()&&AccountAccess.fingerprint(credential).equals(message.getData().get("accessHash")))AccountAccess.revoke(this,credential);return;}
+        if(!Prefs.enabled(this)||DeviceAuth.token().isEmpty())return;
         NotificationManager manager=getSystemService(NotificationManager.class);if(!manager.areNotificationsEnabled())return;
         Prefs.get(this).edit().putBoolean("pushReady",true).putString("pushStatus","FCM подключён").apply();
         Map<String,String> data=message.getData();

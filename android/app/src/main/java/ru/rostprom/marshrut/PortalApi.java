@@ -18,6 +18,7 @@ final class PortalApi {
         return request(path,post,credential,null);
     }
     static JSONObject post(String path,JSONObject body) throws Exception {return request(path,true,DeviceAuth.token(),body);}
+    static JSONObject post(String path,JSONObject body,String credential) throws Exception {return request(path,true,credential,body);}
     private static JSONObject request(String path,boolean post,String credential,JSONObject body) throws Exception {
         HttpURLConnection c=(HttpURLConnection)new URL(ORIGIN+"/portal-api/"+path).openConnection();
         boolean longWait=path.contains("wait=25");if(longWait)waiting=c;

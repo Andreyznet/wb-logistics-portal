@@ -118,7 +118,7 @@ public final class MonitorService extends Service {
             else if(pushReady()&&data.optBoolean("hasMore"))executor.execute(this::sync);
         }catch(PortalApi.WaitCancelled ignored){return;}catch(PortalApi.ApiException e){
             if(stopped)return;
-            if(e.status==401){alarm.stop();notifications.cancelAll();if(credential.equals(DeviceAuth.token())){DeviceAuth.clear();Prefs.clearAccount(this);}event(99997,"session","Сеанс завершён. Откройте приложение и войдите снова.");stopSelf();}
+            if(e.status==401){alarm.stop();AccountAccess.revoke(this,credential);stopSelf();}
             else failure("Портал вернул HTTP "+e.status+". Проверьте обновление сервера.");
         }catch(Exception e){failure(e instanceof java.io.IOException?"Нет связи с порталом. Проверьте интернет.":"Ошибка приложения: "+e.getClass().getSimpleName()+". Обновите приложение и сервер.");}
         finally{if(wakeLock.isHeld())wakeLock.release();}

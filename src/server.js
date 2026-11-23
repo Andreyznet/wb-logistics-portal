@@ -1,3 +1,4 @@
+import {listDevices,blockAccount} from './account-access.js';
 import {permissionsFor,allowed,requirePermission,permissionMatrix,savePermissions,managerActor,diagnosticActor} from './permissions.js';
 import {notificationSounds} from './notification-sounds.js';
 import {dashboard} from './dashboard.js';
@@ -85,6 +86,13 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       }
       if (url.pathname.startsWith('/api/')) {
         if (!user) fail(401,'Войдите в портал.');
+        if(url.pathname==='/api/admin/devices'&&req.method==='GET')return json(200,{data:listDevices(store,user),users:store.users()});
+        const blockMatch=/^\/api\/admin\/users\/(\d+)\/block$/.exec(url.pathname);
+        if(blockMatch&&req.method==='POST')return json(200,blockAccount(store,Number(blockMatch[1]),(await body(req)).blocked,user));
+        if(url.pathname==='/api/mobile/heartbeat'&&req.method==='POST'){
+          if(!device)fail(401,'Подключите телефон заново.');const input=await body(req);if(typeof input.foreground!=='boolean')fail(400,'Некорректный статус.');
+          store.db.prepare('UPDATE mobile_devices SET foreground=?,last_ui_at=? WHERE id=?').run(input.foreground?1:0,new Date().toISOString(),device.id);return json(200,{ok:true});
+        }
         if(url.pathname==='/api/access'&&req.method==='GET')return json(200,{user,permissions:permissionsFor(store,user)});
         if(url.pathname==='/api/admin/permissions'){
           if(user.role!=='super_admin')fail(403,'Панель прав доступна только администратору.');
@@ -109,7 +117,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         if(/^\/api\/bot\/(attempts|snapshots)\/\d+$/.test(path))check('found.details');
         if(/^\/api\/bot\/events\/\d+\/delete$/.test(path))check('found.delete');
 
-        if(url.pathname==='/api/mobile/connect'&&req.method==='POST'){if(!browserUser)fail(403,'Войдите в кабинет для подключения телефона.');return json(200,connectMobile(store,browserUser,(await body(req)).installationId));}
+        if(url.pathname==='/api/mobile/connect'&&req.method==='POST'){if(!browserUser)fail(403,'Войдите в кабинет для подключения телефона.');const input=await body(req);return json(200,connectMobile(store,browserUser,input.installationId,input));}
         if(url.pathname==='/api/mobile/disconnect'&&req.method==='POST'){if(device)store.db.prepare('DELETE FROM mobile_devices WHERE id=?').run(device.id);return json(200,{ok:true});}
         if(url.pathname==='/api/mobile/push-token'&&req.method==='POST'){if(!device)fail(401,'Подключите телефон заново.');return json(200,{...registerPush(store,device,await body(req)),configured:Boolean(pushWorker?.enabled)});}
         const mobileAck=/^\/api\/mobile\/alerts\/(\d+)\/ack$/.exec(url.pathname);
@@ -194,7 +202,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         if(!browserUser)fail(401,'Войдите в портал.');
         requirePermission(store,browserUser,'download');
       }
-      const files = { '/':'index.html','/paged-list.js':'paged-list.js','/overview.js':'overview.js','/knowledge.js':'knowledge.js','/permissions.js':'permissions.js','/mobile-history.js':'mobile-history.js','/help/token-authorization.png':'help/token-authorization.png','/downloads/marshrut.apk':'downloads/marshrut.apk','/notification-audio.js':'notification-audio.js','/app.js':'app.js','/styles.css':'styles.css','/design.css':'design.css','/vendor/tabulator/tabulator.min.js':'vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css':'vendor/tabulator/tabulator.min.css','/favicon.svg':'favicon.svg' };
+      const files = { '/':'index.html','/paged-list.js':'paged-list.js','/overview.js':'overview.js','/knowledge.js':'knowledge.js','/permissions.js':'permissions.js','/devices.js':'devices.js','/mobile-history.js':'mobile-history.js','/help/token-authorization.png':'help/token-authorization.png','/downloads/marshrut.apk':'downloads/marshrut.apk','/notification-audio.js':'notification-audio.js','/app.js':'app.js','/styles.css':'styles.css','/design.css':'design.css','/vendor/tabulator/tabulator.min.js':'vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css':'vendor/tabulator/tabulator.min.css','/favicon.svg':'favicon.svg' };
       const preset=/^\/avatars\/(cat|frog|robot|bear|owl)\.svg$/.test(url.pathname);
       const sound=notificationSounds.some(s=>s.url===url.pathname);
       const file = sound||preset?url.pathname.slice(1):files[url.pathname];

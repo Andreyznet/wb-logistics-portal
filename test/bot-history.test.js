@@ -37,7 +37,20 @@ test('event page includes its acceptance result and endpoints enforce administra
  try{
  assert.equal((await fetch(origin+'/api/bot/history/events')).status,401);
  const manager=store.addUser({username:'manager',name:'Manager',password:'testing-password-123',role:'admin'},admin);
- for(const [user,status]of [[manager,403],[admin,200]]){const response=await fetch(origin+'/api/bot/history/events',{headers:{Cookie:'portal_session='+store.createSession(user.id)}});assert.equal(response.status,status);if(status===200){const body=await response.json();assert.equal(body.data[0].outcome.payload.message,'Conflict');}}
+ const logist=store.addUser({username:'logist',name:'Logist',password:'testing-password-123',role:'logist'},admin);
+ store.db.prepare('UPDATE bot_events SET payload=? WHERE id=1').run(JSON.stringify({...payload,curl:'private-curl',snapshotId:99,previewNote:'private-diagnostic'}));
+ for(const user of [manager,logist,admin]){
+  const headers={Cookie:'portal_session='+store.createSession(user.id)};
+  const response=await fetch(origin+'/api/bot/history/events',{headers});assert.equal(response.status,200);
+  const body=await response.json();assert.equal(body.data[0].outcome.payload.message,'Conflict');
+  const privileged=user.role==='super_admin';assert.equal(JSON.stringify(body).includes('private-curl'),privileged);assert.equal(JSON.stringify(body).includes('private-diagnostic'),privileged);
+  assert.equal((await fetch(origin+'/api/bot/history/logs',{headers})).status,privileged?200:403);
+  if(!privileged){
+   assert.equal((await fetch(origin+'/api/bot/events/1/delete',{method:'POST',headers})).status,403);
+   assert.equal((await fetch(origin+'/api/bot/snapshots/99',{headers})).status,403);
+   assert.equal((await fetch(origin+'/api/bot/attempts/123',{headers})).status,403);
+  }
+ }
  const headers={Cookie:'portal_session='+store.createSession(admin.id)};const summary=await(await fetch(origin+'/api/bot/status?summary=1',{headers})).json();assert.deepEqual(summary.events,[]);
  }finally{await new Promise(resolve=>server.close(resolve));store.close();}
 });

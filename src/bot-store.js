@@ -79,6 +79,18 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
     for(const row of candidates){const payload=JSON.stringify(row),hash=createHash('sha256').update(payload).digest('hex'),previous=old.get(row.id);if(!previous||!previous.active||previous.fingerprint!==hash){if(snapshot&&!snapshotId)snapshotId=Number(db.prepare('INSERT INTO bot_snapshots(payload,created_at) VALUES(?,?)').run(JSON.stringify(snapshot),new Date().toISOString()).lastInsertRowid);const eventPayload={...row,...(snapshotId?{snapshotId}:{})};db.prepare('INSERT INTO bot_events(kind,payload,created_at) VALUES(?,?,?)').run(previous?.active?'candidate_updated':'candidate_found',JSON.stringify(eventPayload),new Date().toISOString());recordBotLog('curl_preview',eventPayload);if(snapshotId)recordBotLog('snapshot_saved',{id:row.id,routeId:row.routeId,snapshotId});events++;}db.prepare('INSERT INTO bot_observations VALUES(?,?,1,?) ON CONFLICT(id) DO UPDATE SET fingerprint=excluded.fingerprint,active=1,payload=excluded.payload').run(row.id,hash,payload);}
     history.cleanupBotHistory();return events;
   });}
+  function recordApiHealth({endpoint,method,httpStatus,message}){
+    const issues={...read('bot_runtime',{}).apiIssues},previous=issues[endpoint],at=new Date().toISOString();
+    if(httpStatus===200){
+      if(!previous)return;
+      delete issues[endpoint];
+      recordBotLog('api_recovered',{endpoint,method,httpStatus,message,failedSince:previous.firstSeenAt});
+    }else{
+      issues[endpoint]={endpoint,method,httpStatus,message,firstSeenAt:previous?.firstSeenAt||at,lastSeenAt:at,count:(previous?.count||0)+1};
+      recordBotLog('api_error',{endpoint,method,httpStatus,message,count:issues[endpoint].count});
+    }
+    setBotRuntime({apiIssues:issues});
+  }
   function recordBotLog(kind,payload){
     const at=new Date().toISOString();
     db.prepare('INSERT INTO bot_logs(kind,payload,created_at) VALUES(?,?,?)').run(kind,JSON.stringify(payload),at);
@@ -124,6 +136,6 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
     return transaction(()=>{const event=db.prepare('SELECT payload FROM bot_events WHERE id=?').get(id);if(!event)fail(404,'Запись не найдена.');const payload=JSON.parse(event.payload);db.prepare('DELETE FROM bot_events WHERE id=?').run(id);db.prepare('UPDATE bot_observations SET active=0 WHERE id=?').run(payload.id);audit(actor.id,'bot_event_deleted',null,'Запись '+id+', заявка WB '+payload.id+'; история попыток сохранена.');return {ok:true,requestId:payload.id};});
   }
   const acceptanceStore=createAcceptanceStore({db,transaction,botConfig,recordAcceptanceResult,audit,fail});
-  return {notifyObservedCandidate,...history,...acceptanceStore,deleteBotEvent,createTestAlert,userAlerts,acknowledgeAlert,recordAcceptanceResult,getBotSnapshot,recordBotLog,getBotSettings,saveBotSettings,botConfig,stopBot,setBotRuntime,getBotStatus,recordBotCandidates};
+  return {recordApiHealth,notifyObservedCandidate,...history,...acceptanceStore,deleteBotEvent,createTestAlert,userAlerts,acknowledgeAlert,recordAcceptanceResult,getBotSnapshot,recordBotLog,getBotSettings,saveBotSettings,botConfig,stopBot,setBotRuntime,getBotStatus,recordBotCandidates};
 }
 

@@ -18,7 +18,7 @@ export function createBotHistory(db,fail){
   if(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='acceptance_attempts'").get())db.prepare("UPDATE acceptance_attempts SET response=NULL WHERE updated_at<? AND state NOT IN ('pending','uncertain')").run(now-90*86400000);
  }
  function page(kind,input,actor){
-  if(actor?.role!=='super_admin')fail(403,'Журнал доступен только администратору.');
+  if(!['super_admin','admin','logist'].includes(actor?.role)||kind==='logs'&&actor.role!=='super_admin')fail(403,'Журнал доступен только администратору.');
   if(!['logs','events'].includes(kind))fail(400,'Неизвестный журнал.');cleanup();
   const page=Number(input.page??1),size=Number(input.size??30);
   if(!Number.isSafeInteger(page)||page<1||page>1000000||!Number.isSafeInteger(size)||size<1||size>100)fail(400,'Некорректная страница.');
@@ -41,7 +41,8 @@ export function createBotHistory(db,fail){
   const join=kind==='events'?" LEFT JOIN bot_acceptance_results r ON r.id=json_extract(e.payload,'$.id')":'',where=clauses.length?' WHERE '+clauses.join(' AND '):'';
   const total=db.prepare('SELECT count(*) AS n FROM '+table+' e'+join+where).get(...args).n;
   const rows=db.prepare('SELECT e.*'+(kind==='events'?',r.kind AS outcome_kind,r.payload AS outcome_payload':'')+' FROM '+table+' e'+join+where+' ORDER BY '+order.join(',')+' LIMIT ? OFFSET ?').all(...args,size,(page-1)*size).map(row=>({...row,payload:JSON.parse(row.payload),...(row.outcome_payload?{outcome:{kind:row.outcome_kind,payload:JSON.parse(row.outcome_payload)}}:{})}));
-  return {data:rows,total,maxId,last_page:Math.max(1,Math.ceil(total/size)),last_row:total};
+  const data=actor.role==='super_admin'?rows:rows.map(row=>({id:row.id,kind:row.kind,created_at:row.created_at,payload:{id:row.payload.id,routeId:row.payload.routeId,carDt:row.payload.carDt},...(row.outcome?{outcome:{kind:row.outcome.kind,payload:{message:row.outcome.payload.message}}}:{})}));
+  return {data,total,maxId,last_page:Math.max(1,Math.ceil(total/size)),last_row:total};
  }
  return {cleanupBotHistory:cleanup,botHistoryPage:page};
 }

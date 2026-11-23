@@ -2107,6 +2107,8 @@ dialog::backdrop {
   }
   .mobile-bottom-nav .nav-title { display: none; }
   .mobile-bottom-nav .nav-short { display: block; white-space: nowrap; }
+  .mobile-bottom-nav { overflow-x: auto; justify-content: flex-start; }
+  .mobile-bottom-nav.nav button { flex: 1 0 64px; min-width: 64px; }
   body:has(.shell) #toast { bottom: calc(80px + env(safe-area-inset-bottom)); }
 }
 

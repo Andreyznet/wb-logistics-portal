@@ -1,4 +1,5 @@
 import { LiveAcceptance } from './live-acceptance.js';
+import { monitoredFetch } from './api-monitor.js';
 const API='https://logistics.wb.ru/transport-requests-service/api/v1/transport-requests';
 const weekday={Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6,Sun:7};
 export function localParts(date,timeZone){const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit',weekday:'short',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(date).map(p=>[p.type,p.value]));return{date:`${p.year}-${p.month}-${p.day}`,day:weekday[p.weekday],time:`${p.hour}:${p.minute}`};}
@@ -16,7 +17,7 @@ export function previewCurl(id,plan){
   return `curl.exe --request PUT "${API}/${id}/take-by-supplier" --header "Authorization: Bearer $env:WB_TOKEN" --header "Content-Type: application/json" --data-raw '${body}'`;
 }
 export class BotWorker {
-  constructor(store,{fetchImpl=fetch,clock=()=>new Date()}={}){this.version='0.18.3';this.store=store;this.fetchImpl=fetchImpl;this.clock=clock;this.busy=false;this.controller=null;this.timer=null;this.revision=null;this.nextAt=0;this.lastAttempt=0;this.generation=0;this.failures=0;this.live=new LiveAcceptance(store,this);this.deniedCards=new Map();}
+  constructor(store,{fetchImpl=fetch,clock=()=>new Date()}={}){this.version='0.18.3';this.store=store;this.fetchImpl=monitoredFetch(store,fetchImpl);this.clock=clock;this.busy=false;this.controller=null;this.timer=null;this.revision=null;this.nextAt=0;this.lastAttempt=0;this.generation=0;this.failures=0;this.live=new LiveAcceptance(store,this);this.deniedCards=new Map();}
   start(){this.store.recordBotLog('worker_started',{workerVersion:this.version,message:'Процесс мониторинга запущен. Запросы WB выполняются при включённом боте и активных планах.'});this.store.setBotRuntime({state:'stopped',nextPollAt:null,workerVersion:this.version});const run=()=>this.tick().catch(()=>this.store.setBotRuntime({state:'error',error:'Ошибка процесса мониторинга.'}));this.timer=setInterval(run,1000);this.timer.unref();void run();}
   stop(){clearInterval(this.timer);this.generation++;this.controller?.abort();}
   changed(){this.generation++;this.controller?.abort();this.revision=null;}

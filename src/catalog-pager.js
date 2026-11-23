@@ -1,7 +1,9 @@
 import {createHash,createHmac,randomBytes,timingSafeEqual} from 'node:crypto';
 import {makeDirectoryApi,parsePartnershipPage,parseTransport,partnershipBody,routecarBody,parseRoutecarPage} from './directory-api.js';
 import {fail} from './store.js';
+import {monitoredFetch} from './api-monitor.js';
 export function createCatalogPager(store,{fetchImpl=fetch,clock=()=>Date.now()}={}){
+ fetchImpl=monitoredFetch(store,fetchImpl);
  const key=randomBytes(32),cache=new Map();let transport=null;
  const hash=value=>createHash('sha256').update(value).digest('hex');
  const sign=value=>createHmac('sha256',key).update(value).digest('base64url');

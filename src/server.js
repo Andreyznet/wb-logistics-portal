@@ -1,6 +1,7 @@
 import {notificationSounds} from './notification-sounds.js';
 import {dashboard} from './dashboard.js';
 import { makeDirectoryApi, parseTransport, collectPartnerships, buildDirectory } from './directory-api.js';
+import { monitoredFetch } from './api-monitor.js';
 import { createCatalogPager } from './catalog-pager.js';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -92,7 +93,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         if(url.pathname==='/api/catalog/sync' && req.method==='POST') {
           if(!['admin','super_admin'].includes(user.role))fail(403,'Обновление доступно менеджеру и администратору.');
           const c=store.botConfig();if(!c.token)fail(400,'Сначала сохраните токен в настройках бота.');
-          const headers={Authorization:`Bearer ${c.token}`};const api=makeDirectoryApi({logisticsHeaders:headers,driveHeaders:headers});
+          const headers={Authorization:`Bearer ${c.token}`};const api=makeDirectoryApi({logisticsHeaders:headers,driveHeaders:headers},monitoredFetch(store,directoryFetch));
           try {
             const transport=parseTransport(await api.transport());
             const partners=await collectPartnerships({requestPage:api.partnerships,supplierId:c.supplierId||Number(process.env.SUPPLIER_ID||0)});

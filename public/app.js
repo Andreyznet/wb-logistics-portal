@@ -77,13 +77,33 @@ function renderAuth(){
   document.querySelector('#auth-form').onsubmit=async event=>{void unlockAlarmAudio({prime:true});event.preventDefault();const form=event.currentTarget;const button=form.querySelector('[type=submit]');button.disabled=true;form.querySelector('.form-error').textContent='';try{const data=Object.fromEntries(new FormData(form));await api(setup?'/api/setup':'/api/login',{method:'POST',data,headers:setup&&data.setupToken?{'X-Setup-Token':data.setupToken}:{}});await boot();}catch(error){form.querySelector('.form-error').textContent=error.message;}finally{button.disabled=false;}};
 }
 function navItem(view,title,name){const short={dashboard:'Обзор',requests:'Заявки',catalog:'Справочники',activity:'История',users:'Команда',bot:'Бот',found:'Найденные',logs:'Журнал'};return `<button data-view="${view}" aria-label="${title}" ${state.view===view?'aria-current="page"':''} class="${state.view===view?'active':''}">${icon(name)}<span class="nav-title">${title}</span><span class="nav-short">${short[view]}</span></button>`;}
+function mountMobileNavigation(){
+ const buttons=[...document.querySelectorAll('.sidebar .nav [data-view]')];
+ const overflow=buttons.length>5,primary=overflow?buttons.slice(0,4):buttons,extra=overflow?buttons.slice(4):[];
+ const nav=document.createElement('nav');nav.className='nav mobile-bottom-nav';nav.setAttribute('aria-label','Мобильная навигация');
+ primary.forEach(button=>nav.append(button.cloneNode(true)));
+ if(extra.length){
+  const more=document.createElement('button');more.type='button';more.id='mobile-more-button';more.setAttribute('aria-haspopup','dialog');more.setAttribute('aria-controls','mobile-more-dialog');more.setAttribute('aria-expanded','false');
+  more.classList.toggle('active',extra.some(button=>button.dataset.view===state.view));
+  more.innerHTML='<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg><span class="nav-short">Ещё</span>';
+  const dialog=document.createElement('dialog');dialog.id='mobile-more-dialog';dialog.className='mobile-more-dialog';dialog.setAttribute('aria-labelledby','mobile-more-title');
+  dialog.innerHTML='<div class="dialog-head"><h2 id="mobile-more-title">Разделы</h2><button type="button" class="close" aria-label="Закрыть меню">'+icon('close')+'</button></div><nav class="mobile-more-links" aria-label="Дополнительные разделы"></nav>';
+  extra.forEach(button=>dialog.querySelector('nav').append(button.cloneNode(true)));
+  dialog.querySelector('.close').onclick=()=>dialog.close();
+  dialog.addEventListener('click',event=>{if(event.target===dialog){const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)dialog.close();}});
+  dialog.addEventListener('close',()=>more.setAttribute('aria-expanded','false'));
+  more.onclick=()=>{dialog.showModal();more.setAttribute('aria-expanded','true');};
+  nav.append(more);app.append(dialog);
+ }
+ app.append(nav);
+}
 function render(){
   catalogCollection?.destroy();clearTimeout(catalogSearchTimer);
   monitorTable?.destroy();monitorTable=null;foundTable?.destroy();foundTable=null;
   if(state.view==='logs'&&state.user.role!=='super_admin')state.view='found';
   const titles={dashboard:'Обзор',requests:'Заявки логистов',catalog:'Справочники',activity:'История изменений',users:'Команда',bot:'Настройки бота',found:'Найденные заявки',logs:'Журнал мониторинга'};
   app.innerHTML=`<div class="shell"><aside class="sidebar">${brand()}<p class="nav-label">Разделы</p><nav class="nav" aria-label="Разделы портала">${navItem('dashboard','Обзор','grid')}${navItem('requests','Заявки логистов','route')}${navItem('found','Найденные заявки','search')}${navItem('catalog','Справочники','truck')}${state.user.role==='super_admin'?navItem('logs','Журнал мониторинга','file'):''}${state.user.role!=='logist'?navItem('activity','История изменений','clock'):''}${navItem('users','Команда','users')}${['admin','super_admin'].includes(state.user.role)?navItem('bot','Настройки бота','shield'):''}</nav><div class="sidebar-bottom"><div class="sidebar-note"><strong>Планы под контролем</strong>Заранее подготовьте экипажи для нужных направлений.</div><div class="sidebar-footer">${icon('shield')}<span>Внутренний кабинет команды</span></div></div></aside><main class="main"><header class="topbar"><div class="breadcrumb"><span>Рабочий кабинет</span><span class="breadcrumb-sep">/</span><strong>${titles[state.view]}</strong></div><div class="topbar-right"><div id="header-bot"></div>${themeButton('theme-toggle')}<span class="topbar-divider" aria-hidden="true"></span><div class="userbox"><button class="avatar profile-avatar" id="profile-avatar" aria-label="Настройки профиля и звука" title="Профиль и звук уведомлений">${avatarImage(state.user)}</button><div class="usertext"><strong>${esc(state.user.name)}</strong><span>${roleLabel(state.user.role)}</span></div></div></div></header><div class="content" id="content"></div></main></div>`;
-  const mobileNav=document.querySelector('.sidebar .nav').cloneNode(true);mobileNav.classList.add('mobile-bottom-nav');mobileNav.setAttribute('aria-label','Мобильная навигация');app.append(mobileNav);
+  mountMobileNavigation();
   document.querySelectorAll('[data-view]').forEach(button=>button.onclick=()=>{state.view=button.dataset.view;state.query='';state.page=1;render();});
   bindThemeButton('theme-toggle');
   document.querySelector('#profile-avatar').onclick=openAvatar;

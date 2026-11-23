@@ -2107,8 +2107,17 @@ dialog::backdrop {
   }
   .mobile-bottom-nav .nav-title { display: none; }
   .mobile-bottom-nav .nav-short { display: block; white-space: nowrap; }
-  .mobile-bottom-nav { overflow-x: auto; justify-content: flex-start; }
-  .mobile-bottom-nav.nav button { flex: 1 0 64px; min-width: 64px; }
+  .mobile-bottom-nav { overflow: hidden; justify-content: space-around; }
+  .mobile-bottom-nav.nav button { flex: 1 1 0; min-width: 0; }
+  .mobile-bottom-nav .nav-short { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .mobile-more-dialog { position: fixed; inset: auto 0 var(--mobile-nav-bottom, 0px); margin: 0 auto; width: min(100%, 480px); max-width: 100%; max-height: calc(100dvh - 24px); border-radius: 20px 20px 0 0; padding: 0; overflow: auto; background: var(--topbar-bg); color: var(--ink); }
+  .mobile-more-dialog .dialog-head { padding: 18px 20px; }
+  .mobile-more-dialog h2 { margin: 0; font-size: 18px; }
+  .mobile-more-links { display: grid; gap: 6px; padding: 8px 16px calc(16px + env(safe-area-inset-bottom)); }
+  .mobile-more-links button { display: flex; align-items: center; gap: 12px; min-height: 52px; width: 100%; padding: 12px 14px; text-align: left; color: var(--ink); background: transparent; border: 0; border-radius: 10px; }
+  .mobile-more-links button svg { width: 21px; height: 21px; flex: none; }
+  .mobile-more-links button.active { color: var(--accent-text); background: var(--accent-soft); }
+  .mobile-more-links .nav-short { display: none; }
   body:has(.shell) #toast { bottom: calc(80px + env(safe-area-inset-bottom)); }
 }
 

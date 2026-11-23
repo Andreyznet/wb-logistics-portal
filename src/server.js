@@ -2,6 +2,7 @@ import {notificationSounds} from './notification-sounds.js';
 import {dashboard} from './dashboard.js';
 import { makeDirectoryApi, parseTransport, collectPartnerships, buildDirectory } from './directory-api.js';
 import { monitoredFetch } from './api-monitor.js';
+import { knowledgeFor } from './knowledge.js';
 import { createCatalogPager } from './catalog-pager.js';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -78,6 +79,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       }
       if (url.pathname.startsWith('/api/')) {
         if (!user) fail(401,'Войдите в портал.');
+        if(url.pathname==='/api/knowledge'&&req.method==='GET')return json(200,{data:knowledgeFor(user.role)});
         if(url.pathname==='/api/bot/test-alert'&&req.method==='POST'){const input=await body(req);return json(201,store.createTestAlert(input.planId??null,user));}
         if(url.pathname==='/api/me/alerts'&&req.method==='GET')return json(200,{data:store.userAlerts(user)});
         const alertMatch=/^\/api\/me\/alerts\/(\d+)\/ack$/.exec(url.pathname);
@@ -146,7 +148,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         fail(404,'Раздел не найден или недостаточно прав.');
       }
       if (req.method !== 'GET') fail(404,'Страница не найдена.');
-      const files = { '/':'index.html','/paged-list.js':'paged-list.js','/overview.js':'overview.js','/notification-audio.js':'notification-audio.js','/app.js':'app.js','/styles.css':'styles.css','/design.css':'design.css','/vendor/tabulator/tabulator.min.js':'vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css':'vendor/tabulator/tabulator.min.css','/favicon.svg':'favicon.svg' };
+      const files = { '/':'index.html','/paged-list.js':'paged-list.js','/overview.js':'overview.js','/knowledge.js':'knowledge.js','/notification-audio.js':'notification-audio.js','/app.js':'app.js','/styles.css':'styles.css','/design.css':'design.css','/vendor/tabulator/tabulator.min.js':'vendor/tabulator/tabulator.min.js','/vendor/tabulator/tabulator.min.css':'vendor/tabulator/tabulator.min.css','/favicon.svg':'favicon.svg' };
       const preset=/^\/avatars\/(cat|frog|robot|bear|owl)\.svg$/.test(url.pathname);
       const sound=notificationSounds.some(s=>s.url===url.pathname);
       const file = sound||preset?url.pathname.slice(1):files[url.pathname];

@@ -20,7 +20,7 @@ test('blocking revokes browser and all device credentials, cancels an outstandin
  }finally{store.close();}
 });
 
-test('only administrator can block accounts and inspect sanitized device presence; administrators cannot be blocked',async()=>{
+test('manager can block staff; device presence is administrator-only and protected accounts cannot be blocked',async()=>{
  const store=openStore(':memory:');seedPreviewDemo(store);const server=createPortal({store});await new Promise(r=>server.listen(0,'127.0.0.1',r));
  const origin='http://127.0.0.1:'+server.address().port,users=store.users(),root=users.find(u=>u.role==='super_admin'),manager=users.find(u=>u.role==='admin'),user=users.find(u=>u.role==='logist');
  const cookies=new Map(users.map(u=>[u.id,'portal_session='+store.createSession(u.id)]));
@@ -29,7 +29,15 @@ test('only administrator can block accounts and inspect sanitized device presenc
   const pair=connectMobile(store,user,'sanitized-phone-test',{deviceName:'Test phone',appVersion:'1.1.1'}),auth={Authorization:'Bearer '+pair.token,Origin:origin,'Content-Type':'application/json'};
   assert.equal((await fetch(origin+'/portal-api/mobile/heartbeat',{method:'POST',headers:auth,body:'{"foreground":true}'})).status,200);
   const response=await call(root,'/admin/devices');assert.equal(response.status,200);const devices=await response.json();assert.equal(devices.data[0].device_name,'Test phone');assert.equal(devices.data[0].foreground,1);assert.ok(devices.data[0].last_ui_at);assert.ok(!JSON.stringify(devices).includes(pair.token));assert.ok(!Object.hasOwn(devices.data[0],'token_hash'));
-  for(const u of [manager,user]){assert.equal((await call(u,'/admin/devices')).status,403);assert.equal((await call(u,'/admin/users/'+user.id+'/block',{blocked:true})).status,403);}
+  for(const u of [manager,user])assert.equal((await call(u,'/admin/devices')).status,403);
+  assert.equal((await call(user,'/admin/users/'+manager.id+'/block',{blocked:true})).status,403);
+  assert.equal((await call(manager,'/admin/users/'+user.id+'/block',{blocked:true})).status,200);
+  assert.equal((await call(manager,'/admin/users/'+user.id+'/block',{blocked:false})).status,200);
+  assert.equal((await call(manager,'/admin/users/'+manager.id+'/block',{blocked:true})).status,403);
+  assert.equal((await call(manager,'/admin/users/'+root.id+'/block',{blocked:true})).status,403);
+  const peer=store.addUser({username:'peer.manager',name:'Peer manager',password:'long-password-123',role:'admin'},root),peerSession=store.createSession(peer.id);
+  assert.equal((await call(manager,'/admin/users/'+peer.id+'/block',{blocked:true})).status,200);assert.equal(store.session(peerSession),null);
+  assert.equal((await call(manager,'/admin/users/'+peer.id+'/block',{blocked:false})).status,200);
   assert.equal((await call(root,'/admin/users/'+root.id+'/block',{blocked:true})).status,403);
   assert.equal((await call(root,'/admin/users/'+user.id+'/block',{blocked:'true'})).status,400);
   assert.equal((await call(root,'/admin/users/'+user.id+'/block',{blocked:true})).status,200);

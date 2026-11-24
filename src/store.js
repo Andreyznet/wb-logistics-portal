@@ -118,7 +118,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     const row = db.prepare('SELECT * FROM users WHERE username=?').get(clean(username, 64).toLowerCase());
     const good = passwordMatches(typeof password === 'string' ? password.slice(0, 200) : '', row?.password_hash || dummyHash);
     if (!row || !good) fail(401, 'Неверный логин или пароль.');
-    if(row.blocked)fail(403,'Учётная запись заблокирована администратором.');
+    if(row.blocked)fail(403,'Учётная запись заблокирована. Обратитесь к менеджеру или администратору.');
     return publicUser(row);
   }
   function createSession(userId) {

@@ -2378,3 +2378,6 @@ dialog::backdrop {
 .history-route-label{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0;width:100%;text-align:left;line-height:1.5}.history-route-label>strong{display:block;flex:none;white-space:nowrap}.history-route-label .route-name{margin:0;max-width:100%;text-align:left}
 .requests-table .row-actions{flex-wrap:nowrap;white-space:nowrap;gap:4px}.requests-table .row-actions .icon-btn{flex-shrink:0}
 @media(min-width:701px){.requests-table th:last-child,.requests-table td:last-child{width:148px;min-width:148px}.requests-table .row-actions{min-width:104px;align-items:center;justify-content:flex-end}}
+
+.staff-access-control{display:flex;align-items:center;gap:16px;padding:16px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.staff-access-control>div{flex:1;min-width:0}.staff-access-control strong{display:block;font-size:14px}.staff-access-control p{font-size:12px;line-height:1.5;color:var(--muted);margin:6px 0 0}.staff-access-control>button{flex:none}
+@media(max-width:600px){.staff-access-control{align-items:stretch;flex-direction:column;gap:12px}.staff-access-control>button{width:100%}}

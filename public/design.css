@@ -2373,3 +2373,8 @@ dialog::backdrop {
 [data-theme=dark] .log-tone-success{--log-color:#59d5a2}[data-theme=dark] .log-tone-error{--log-color:#ff8590}[data-theme=dark] .log-tone-warning{--log-color:#ecc06a}[data-theme=dark] .log-tone-discovery{--log-color:#c19af1}[data-theme=dark] .log-tone-network{--log-color:#86b7f2}[data-theme=dark] .log-tone-monitor{--log-color:#72cdd3}[data-theme=dark] .log-tone-system{--log-color:#a9b6c9}
 @media(min-width:701px){.history-resizable.tabulator{resize:vertical;overflow:hidden;min-height:300px;max-height:1800px;padding-bottom:7px}.history-resizable .tabulator-cell{white-space:normal}}
 @media(max-width:700px){.history-resize-hint{display:none}}
+
+/* Keep route captions inside one block even when Tabulator centers cell content. */
+.history-route-label{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0;width:100%;text-align:left;line-height:1.5}.history-route-label>strong{display:block;flex:none;white-space:nowrap}.history-route-label .route-name{margin:0;max-width:100%;text-align:left}
+.requests-table .row-actions{flex-wrap:nowrap;white-space:nowrap;gap:4px}.requests-table .row-actions .icon-btn{flex-shrink:0}
+@media(min-width:701px){.requests-table th:last-child,.requests-table td:last-child{width:148px;min-width:148px}.requests-table .row-actions{min-width:104px;align-items:center;justify-content:flex-end}}

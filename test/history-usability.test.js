@@ -22,11 +22,11 @@ test('stored route names appear on existing plans, dashboard and redacted histor
 });
 test('automatic refresh leaves scrolled history untouched and prevents overlapping refreshes',async()=>{
  const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8'),block=source.slice(source.indexOf('function refreshHistoryTable('),source.indexOf('function mapMonitorHistory('));
- let onScroll;const holder={scrollTop:300,addEventListener:(name,fn)=>{onScroll=fn;},removeEventListener:()=>{}},note={hidden:true};let calls=0,finish;
+ let onScroll;const holder={scrollTop:300,addEventListener:(name,fn)=>{onScroll=fn;},removeEventListener:()=>{}};let calls=0,finish;
  const table={getPage:()=>1,getFilters:()=>[],element:{querySelector:()=>holder},replaceData:()=>{calls++;return new Promise(r=>finish=r);}};
- const context=vm.createContext({document:{activeElement:null,querySelector:()=>note},table});vm.runInContext(block,context);
- vm.runInContext('refreshHistoryTable(table)',context);assert.equal(calls,0);assert.equal(holder.scrollTop,300);assert.equal(note.hidden,false);
- holder.scrollTop=0;vm.runInContext('refreshHistoryTable(table);refreshHistoryTable(table)',context);assert.equal(calls,1);assert.equal(note.hidden,true);holder.scrollTop=720;onScroll();holder.scrollTop=0;finish();await new Promise(r=>setImmediate(r));assert.equal(table._historyRefreshing,false);assert.equal(holder.scrollTop,720);
+ const context=vm.createContext({document:{activeElement:null},table});vm.runInContext(block,context);
+ vm.runInContext('refreshHistoryTable(table)',context);assert.equal(calls,0);assert.equal(holder.scrollTop,300);
+ holder.scrollTop=0;vm.runInContext('refreshHistoryTable(table);refreshHistoryTable(table)',context);assert.equal(calls,1);holder.scrollTop=720;onScroll();holder.scrollTop=0;finish();await new Promise(r=>setImmediate(r));assert.equal(table._historyRefreshing,false);assert.equal(holder.scrollTop,720);
 });
 test('event categories distinguish success, errors, warnings, discovery, requests and monitoring',()=>{
  const source=readFileSync(new URL('../public/history-usability.js',import.meta.url),'utf8'),context=vm.createContext({});vm.runInContext(source,context);

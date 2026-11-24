@@ -41,7 +41,9 @@ export function createBotHistory(db,fail){
   const join=kind==='events'?" LEFT JOIN bot_acceptance_results r ON r.id=json_extract(e.payload,'$.id')":'',where=clauses.length?' WHERE '+clauses.join(' AND '):'';
   const total=db.prepare('SELECT count(*) AS n FROM '+table+' e'+join+where).get(...args).n;
   const rows=db.prepare('SELECT e.*'+(kind==='events'?',r.kind AS outcome_kind,r.payload AS outcome_payload':'')+' FROM '+table+' e'+join+where+' ORDER BY '+order.join(',')+' LIMIT ? OFFSET ?').all(...args,size,(page-1)*size).map(row=>({...row,payload:JSON.parse(row.payload),...(row.outcome_payload?{outcome:{kind:row.outcome_kind,payload:JSON.parse(row.outcome_payload)}}:{})}));
-  const data=actor.role==='super_admin'?rows:rows.map(row=>({id:row.id,kind:row.kind,created_at:row.created_at,payload:{id:row.payload.id,routeId:row.payload.routeId,carDt:row.payload.carDt},...(row.outcome?{outcome:{kind:row.outcome.kind,payload:{message:row.outcome.payload.message}}}:{})}));
+  const names=new Map(),routeName=id=>{if(!names.has(id))names.set(id,db.prepare("SELECT label FROM catalog WHERE kind='route' AND id=?").get(id)?.label||null);return names.get(id);};
+  for(const row of rows){const ids=[row.payload.routeId,...(Array.isArray(row.payload.routes)?row.payload.routes:[])].filter(id=>Number.isSafeInteger(Number(id))&&Number(id)>0);row.payload.routeNames={...row.payload.routeNames,...Object.fromEntries(ids.map(id=>[id,routeName(Number(id))]).filter(([,name])=>name))};if(row.payload.routeId)row.payload.routeName=routeName(Number(row.payload.routeId))||row.payload.routeName||null;}
+  const data=actor.role==='super_admin'?rows:rows.map(row=>({id:row.id,kind:row.kind,created_at:row.created_at,payload:{id:row.payload.id,routeId:row.payload.routeId,routeName:row.payload.routeName,routeNames:row.payload.routeNames,carDt:row.payload.carDt},...(row.outcome?{outcome:{kind:row.outcome.kind,payload:{message:row.outcome.payload.message}}}:{})}));
   return {data,total,maxId,last_page:Math.max(1,Math.ceil(total/size)),last_row:total};
  }
  return {cleanupBotHistory:cleanup,botHistoryPage:page};

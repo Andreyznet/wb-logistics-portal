@@ -44,6 +44,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     db.exec("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE;");
     try{db.exec("CREATE TABLE users_roles(id INTEGER PRIMARY KEY,username TEXT UNIQUE NOT NULL,name TEXT NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('super_admin','admin','logist')),created_at TEXT NOT NULL); INSERT INTO users_roles SELECT * FROM users; UPDATE users_roles SET role='super_admin' WHERE id=(SELECT min(id) FROM users_roles WHERE role='admin'); DROP TABLE users; ALTER TABLE users_roles RENAME TO users; COMMIT;");}catch(e){db.exec('ROLLBACK');throw e;}finally{db.exec('PRAGMA foreign_keys=ON');}
   }
+  if(!db.prepare('PRAGMA table_info(requests)').all().some(c=>c.name==='found_wb_id'))db.exec('ALTER TABLE requests ADD COLUMN found_wb_id INTEGER');
   if(!db.prepare('PRAGMA table_info(requests)').all().some(c=>c.name==='service_time'))db.exec("ALTER TABLE requests ADD COLUMN service_time TEXT NOT NULL DEFAULT '00:00'");
   if(!db.prepare('PRAGMA table_info(users)').all().some(c=>c.name==='blocked'))db.exec('ALTER TABLE users ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0');
   db.exec('CREATE TABLE IF NOT EXISTS user_avatars(user_id INTEGER PRIMARY KEY REFERENCES users(id),preset TEXT,image BLOB,mime TEXT,revision TEXT NOT NULL)');
@@ -216,13 +217,14 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
       fail(409, `${resource} уже запланирован на эту дату в заявке №${conflict.id}.`);
     }
   }
-  function getRequest(id) { return db.prepare('SELECT * FROM requests WHERE id=?').get(id); }
+  function getRequest(id) { const row=db.prepare('SELECT * FROM requests WHERE id=?').get(id);return row&&{...row,status:row.found_wb_id&&row.status!=='archived'?'found':row.status}; }
   function saveRequest(input, actor, id = null) {
     return transaction(() => {
       const old = id ? getRequest(id) : null;
       if (id && !old) fail(404, 'Заявка не найдена.');
       if (old && db.prepare("SELECT id FROM acceptance_attempts WHERE plan_id=? AND state='success'").get(id)) fail(409, 'Обработанную заявку нельзя редактировать.');
       if(old&&db.prepare("SELECT id FROM acceptance_attempts WHERE plan_id=? AND state IN ('pending','uncertain')").get(id))fail(409,'Результат принятия ещё проверяется. Дождитесь подтверждения перед редактированием.');
+      if(old?.found_wb_id)fail(409,'Найденную заявку можно только перенести в архив.');
       if (old?.status === 'archived') fail(409, 'Заявка в архиве.');
       if (old && Number(input.version) !== old.version) fail(409, 'Заявка уже изменена другим логистом. Обновите список.');
       const v = validateRequest(input, old);
@@ -245,6 +247,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
       if (!row) fail(404, 'Заявка не найдена.');
       if (row.version !== Number(version)) fail(409, 'Заявка уже изменена другим логистом. Обновите список.');
       if (row.status === 'archived') fail(409, 'Заявка уже в архиве.');
+      if(status!=='archived'&&row.found_wb_id)fail(409,'Найденную заявку можно только перенести в архив.');
       if (status !== 'archived' && db.prepare("SELECT id FROM acceptance_attempts WHERE plan_id=? AND state='success'").get(id)) fail(409, 'Обработанную заявку можно только перенести в архив.');
       if (status === 'waiting') {
         const v = validateRequest({ routeId: row.route_id, serviceDate: row.service_date, priority: row.priority, driverId: row.driver_id, vehicleId: row.vehicle_id, trailerId: row.trailer_id }, row);
@@ -260,7 +263,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     if(!actor?.id)fail(401,'Войдите в аккаунт.');if(!Number.isSafeInteger(id)||id<1||typeof enabled!=='boolean')fail(400,'Некорректная подписка.');
     return transaction(()=>{const plan=db.prepare('SELECT * FROM requests WHERE id=?').get(id);if(!plan)fail(404,'Заявка не найдена.');
       if(plan.created_by===actor.id)fail(400,'Автор уже получает уведомления по своей заявке.');
-      if(enabled&&(plan.status==='archived'||db.prepare("SELECT id FROM acceptance_attempts WHERE plan_id=? AND state='success'").get(id)))fail(409,'Можно подписаться только на ещё не принятую активную заявку.');
+      if(enabled&&(plan.status==='archived'||plan.found_wb_id||db.prepare("SELECT id FROM acceptance_attempts WHERE plan_id=? AND state='success'").get(id)))fail(409,'Можно подписаться только на ещё не принятую активную заявку.');
       if(enabled)db.prepare('INSERT OR IGNORE INTO request_watchers VALUES(?,?,?)').run(id,actor.id,now());else db.prepare('DELETE FROM request_watchers WHERE request_id=? AND user_id=?').run(id,actor.id);
       return {watching:enabled};
     });
@@ -269,7 +272,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
   return { notificationSettings,saveNotificationSettings,...botStore, db, timeZone, userCount, addUser, updateUser, saveAvatar, getAvatar, login, createSession, session, importDirectory, catalog, catalogSummary, catalogPage, cacheCatalogRows, saveRequest, changeStatus, watchRequest,
     logout: token => db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hashSession(token || '')),
     users: () => db.prepare('SELECT id,username,name,role,created_at,blocked FROM users ORDER BY name').all().map(user=>({...user,avatar:avatarUrl(user.id)})),
-    requests: (actor=null) => db.prepare("SELECT r.*,(SELECT label FROM catalog c WHERE c.kind='route' AND c.id=r.route_id) AS route_name,u.name AS created_by_name,EXISTS(SELECT 1 FROM request_watchers w WHERE w.request_id=r.id AND w.user_id=?) AS watching,(SELECT a.id FROM acceptance_attempts a WHERE a.plan_id=r.id AND a.state='success' ORDER BY a.updated_at DESC LIMIT 1) AS accepted_wb_id FROM requests r JOIN users u ON r.created_by=u.id ORDER BY r.service_date,r.service_time,r.priority,r.id").all(actor?.id||0),
+    requests: (actor=null) => db.prepare("SELECT r.*,(SELECT label FROM catalog c WHERE c.kind='route' AND c.id=r.route_id) AS route_name,u.name AS created_by_name,EXISTS(SELECT 1 FROM request_watchers w WHERE w.request_id=r.id AND w.user_id=?) AS watching,(SELECT a.id FROM acceptance_attempts a WHERE a.plan_id=r.id AND a.state='success' ORDER BY a.updated_at DESC LIMIT 1) AS accepted_wb_id FROM requests r JOIN users u ON r.created_by=u.id ORDER BY r.service_date,r.service_time,r.priority,r.id").all(actor?.id||0).map(row=>({...row,status:row.found_wb_id&&row.status!=='archived'?'found':row.status})),
     activity: () => db.prepare('SELECT a.*,u.name AS actor FROM audit a LEFT JOIN users u ON a.user_id=u.id ORDER BY a.id DESC LIMIT 200').all(),
     close: () => db.close(),
   };

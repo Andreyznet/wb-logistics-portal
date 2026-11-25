@@ -2383,3 +2383,5 @@ dialog::backdrop {
 @media(max-width:600px){.staff-access-control{align-items:stretch;flex-direction:column;gap:12px}.staff-access-control>button{width:100%}}
 
 .monitor-start-row{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(80px,1fr);gap:8px}.monitor-start-row input{min-width:0;width:100%}
+
+.badge.found{color:var(--accent,#e65300)}.badge.found::before{content:"✓";width:auto;height:auto;background:none;border-radius:0}

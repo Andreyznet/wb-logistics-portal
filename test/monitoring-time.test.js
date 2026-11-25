@@ -22,8 +22,9 @@ test('monitoring starts at the configured local minute, old plans default to mid
   await worker.tick();assert.equal(calls,0,'not a single WB request before the start time');
   assert.equal(store.notifyObservedCandidate({id:123,routeId:65522},today,now),0);
   now=new Date(today+'T10:00:00+05:00');assert.equal(monitoringDue(plan,now),true);await worker.tick();assert.equal(calls,1);
-  assert.equal(store.notifyObservedCandidate({id:123,routeId:65522},today,now),1);
   const saved=store.saveRequest({...input,serviceTime:undefined,version:plan.version},root,plan.id);assert.equal(saved.service_time,'10:00');
+  assert.equal(store.notifyObservedCandidate({id:123,routeId:65522},today,now),1);
+
  }finally{store.close();}
 });
 test('processed subscribed plans are excluded from dashboard watched and upcoming lists',()=>{

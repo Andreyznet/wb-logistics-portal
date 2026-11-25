@@ -63,12 +63,12 @@ test('worker is read-only, matches routes regardless of WB date, and deduplicate
   try{
     addPlan(store,admin);const worker=new BotWorker(store,{fetchImpl,clock:()=>now});
     await worker.tick();assert.equal(calls.length,0);
-    config(store,admin,{enabled:true});await worker.tick();assert.equal(calls.length,3);assert.equal(store.getBotStatus(admin).events.length,2);assert.equal(store.getBotStatus(admin).events[0].payload.id,102);
+    config(store,admin,{enabled:true});await worker.tick();assert.equal(calls.length,2);assert.equal(store.getBotStatus(admin).events.length,1);assert.equal(store.getBotStatus(admin).events[0].payload.id,100);
     const snapshot=store.getBotStatus(admin);const savedResponse=store.getBotSnapshot(snapshot.events[0].payload.snapshotId,admin);assert.equal(savedResponse.response.data.length,3);assert.equal(savedResponse.response.data[1].route_id,66091);assert.equal(savedResponse.method,'GET');assert.ok(snapshot.logs.some(e=>e.kind==='request_started'));assert.ok(snapshot.logs.some(e=>e.payload.httpStatus===200));
     assert.ok(snapshot.events[0].payload.curl.includes('"vehicle":2,"driver":1'));assert.ok(snapshot.events[0].payload.curl.includes('$env:WB_TOKEN'));assert.equal(JSON.stringify(snapshot).includes(testToken),false);
-    await worker.tick();assert.equal(calls.length,3);
-    now=new Date(now.getTime()+61000);await worker.tick();assert.equal(calls.length,6);assert.equal(store.getBotStatus(admin).events.length,2);
-    config(store,admin,{enabled:false,token:''});worker.changed();await worker.tick();assert.equal(calls.length,6);
+    await worker.tick();assert.equal(calls.length,2);
+    now=new Date(now.getTime()+61000);await worker.tick();assert.equal(calls.length,2);assert.equal(store.getBotStatus(admin).events.length,1);
+    config(store,admin,{enabled:false,token:''});worker.changed();await worker.tick();assert.equal(calls.length,2);
   }finally{store.close();}
 });
 test('no plans and outside schedule make no requests; denied token disables the bot',async()=>{
@@ -103,7 +103,7 @@ test('rate limits respect Retry-After and a malformed snapshot cannot erase reco
   try{
     addPlan(store,admin);config(store,admin,{enabled:true});await worker.tick();
     assert.equal(store.getBotStatus(admin).events.length,1);
-    now=new Date(now.getTime()+61000);mode='broken';await worker.tick();
+    addPlan(store,admin);now=new Date(now.getTime()+61000);mode='broken';await worker.tick();
     assert.equal(store.db.prepare('SELECT active FROM bot_observations WHERE id=100').get().active,1);
     now=new Date(now.getTime()+61000);mode='rate';await worker.tick();const before=calls;
     assert.ok(Date.parse(store.getBotStatus(admin).runtime.nextPollAt)>=now.getTime()+180000);
@@ -134,12 +134,12 @@ test('full response snapshots persist, share one copy per event batch and requir
  try{const candidates=[{id:10,routeId:61373},{id:11,routeId:65522}];const response={data:[{transport_request_id:10,extra:{arbitrary:'unchanged'}}],meta:{count:1}};const input={receivedAt:new Date().toISOString(),response};assert.equal(store.recordBotCandidates(candidates,input),2);const events=store.getBotStatus(admin).events;const id=events[0].payload.snapshotId;assert.equal(id,events[1].payload.snapshotId);assert.deepEqual(store.getBotSnapshot(id,admin),input);assert.throws(()=>store.getBotSnapshot(id,{role:'logist'}));assert.equal(store.recordBotCandidates(candidates,input),0);assert.equal(store.db.prepare('SELECT count(*) AS n FROM bot_snapshots').get().n,1);store.close();({store,admin}=init(file));assert.deepEqual(store.getBotSnapshot(id,admin),input);}finally{store.close();await rm(folder,{recursive:true,force:true});}
 });
 
-test('plan starts on chosen date, remains active on later days and accepts WB dates across midnight',async()=>{
+test('observation starts on chosen date, accepts WB dates across midnight and stops after finding',async()=>{
  const {store,admin}=init();const date=businessDate();let now=new Date(date+'T12:00:00+05:00');let calls=0;
  try{addPlan(store,admin);config(store,admin,{enabled:true});const worker=new BotWorker(store,{clock:()=>now,fetchImpl:async url=>{calls++;const row={transport_request_id:636001,route_id:61373,supplier_id:null,car_dt:date+'T22:05:40+03:00'};return Response.json({data:url.endsWith('TO_DELIVERY')?[row]:{...row,request_status:'created',is_closed:false}});}});
  now=new Date(now.getTime()-86400000);await worker.tick();assert.equal(calls,0);
  now=new Date(now.getTime()+86400000);await worker.tick();assert.equal(calls,2);assert.equal(store.getBotStatus(admin).runtime.candidates,1);
- now=new Date(now.getTime()+86400000);await worker.tick();assert.equal(calls,4);assert.equal(store.getBotStatus(admin).runtime.candidates,1);
+ now=new Date(now.getTime()+86400000);await worker.tick();assert.equal(calls,2);assert.equal(store.requests()[0].status,'found');
  }finally{store.close();}
 });
 
@@ -194,7 +194,7 @@ test('one forbidden detail does not stop list monitoring or authorize acceptance
  const {store,admin}=init();let now=new Date(),blockedCalls=0;const base={route_id:61373,supplier_id:null,car_dt:businessDate()+'T12:00:00+05:00'};
  try{addPlan(store,admin);config(store,admin,{enabled:true});const worker=new BotWorker(store,{clock:()=>now,fetchImpl:async(url,options)=>{assert.equal(options.method,'GET');if(url.endsWith('TO_DELIVERY'))return Response.json({data:[{...base,transport_request_id:100},{...base,transport_request_id:101}]});if(url.endsWith('/100')){blockedCalls++;return Response.json({error:{message:'Forbidden '+testToken}},{status:403});}return Response.json({data:{...base,transport_request_id:101,request_status:'created',is_closed:false}});}});
  await worker.tick();let status=store.getBotStatus(admin);assert.equal(store.botConfig().enabled,true);assert.equal(status.runtime.candidates,1);assert.equal(status.runtime.deniedCards,1);assert.match(status.runtime.warning,/мониторинг остальных/);assert.equal(status.events[0].payload.id,101);assert.equal(status.events.some(e=>e.payload.id===100),false);const denied=status.logs.find(e=>e.kind==='card_access_denied');assert.equal(denied.payload.httpStatus,403);assert.equal(JSON.stringify(status).includes(testToken),false);
- now=new Date(now.getTime()+61000);await worker.tick();assert.equal(blockedCalls,1);now=new Date(now.getTime()+300000);await worker.tick();assert.equal(blockedCalls,2);
+ addPlan(store,admin);now=new Date(now.getTime()+61000);await worker.tick();assert.equal(blockedCalls,1);addPlan(store,admin);now=new Date(now.getTime()+300000);await worker.tick();assert.equal(blockedCalls,2);
  }finally{store.close();}
 });
 test('forbidden list and unauthorized detail still stop monitoring with specific explanations',async()=>{

@@ -10,11 +10,11 @@ function setup(){const store=openStore(':memory:'),admin=store.addUser({username
 const input=(extra={})=>({routeId:61373,serviceDate:businessDate(),driverId:1,vehicleId:2,priority:1,...extra});
 const card={transport_request_id:100,route_id:61373,route_name:'Test route',supplier_id:null,car_dt:'2026-11-23T13:00:00+03:00',request_status:'created',is_closed:false};
 function enable(store,admin,supplierId=10){store.saveBotSettings({...store.getBotSettings(admin),enabled:true,token:'test-token-value',supplierId,acceptanceEnabled:false},admin);}
-test('monitor-only plan notifies owner and followers once, never sends PUT and remains active after acknowledgement',async()=>{
+test('monitor-only plan notifies owner and followers once, never sends PUT and finishes after the first discovery',async()=>{
  const {store,admin,logist}=setup();try{
  const plan=store.saveRequest(input({observeOnly:true}),admin);store.watchRequest(plan.id,true,logist);enable(store,admin,0);let now=new Date(),puts=0;
  const worker=new BotWorker(store,{clock:()=>now,fetchImpl:async(url,options)=>{if(options.method==='PUT')puts++;return Response.json({data:url.endsWith('TO_DELIVERY')?[card]:card});}});
- await worker.tick();assert.equal(puts,0);const owner=store.userAlerts(admin)[0],follower=store.userAlerts(logist)[0];assert.equal(owner.payload.observed,true);assert.equal(owner.payload.id,100);assert.equal(owner.payload.planId,plan.id);assert.equal(follower.payload.watching,true);assert.match(owner.payload.message,/не отправлялся/);assert.equal(store.requests()[0].status,'waiting');assert.equal(store.pendingAcceptances().length,0);
+ await worker.tick();assert.equal(puts,0);const owner=store.userAlerts(admin)[0],follower=store.userAlerts(logist)[0];assert.equal(owner.payload.observed,true);assert.equal(owner.payload.id,100);assert.equal(owner.payload.planId,plan.id);assert.equal(follower.payload.watching,true);assert.match(owner.payload.message,/не отправлялся/);assert.equal(store.requests()[0].status,'found');assert.equal(store.pendingAcceptances().length,0);
  store.acknowledgeAlert(owner.id,admin);now=new Date(now.getTime()+61000);await worker.tick();assert.equal(store.userAlerts(admin).length,0);assert.equal(store.userAlerts(logist).length,1);assert.equal(puts,0);assert.equal(store.getBotStatus(admin).outcomes.length,0);
  }finally{store.close();}
 });
@@ -22,7 +22,7 @@ test('default live plans accept even if an obsolete global false is submitted; o
  const {store,admin,logist}=setup();try{
  const observer=store.saveRequest(input({observeOnly:true,priority:1}),logist),live=store.saveRequest(input({priority:2}),admin);assert.equal(live.observe_only,0);enable(store,admin);assert.equal(store.botConfig().acceptanceEnabled,true);assert.equal(store.claimAcceptance(101,observer,Date.now()),null);let puts=0;
  const worker=new BotWorker(store,{fetchImpl:async(url,options)=>{if(options.method==='PUT'){puts++;assert.equal(JSON.parse(options.body).driver,1);return Response.json({data:{...card,supplier_id:10,driver_id:1,vehicle_id:2}});}return Response.json({data:url.endsWith('TO_DELIVERY')?[card]:card});}});
- await worker.tick();assert.equal(puts,1);assert.equal(store.requests().find(p=>p.id===live.id).accepted_wb_id,100);assert.equal(store.requests().find(p=>p.id===observer.id).status,'waiting');assert.equal(store.userAlerts(logist)[0].payload.observed,true);assert.equal(Boolean(store.userAlerts(admin)[0].payload.observed),false);
+ await worker.tick();assert.equal(puts,1);assert.equal(store.requests().find(p=>p.id===live.id).accepted_wb_id,100);assert.equal(store.requests().find(p=>p.id===observer.id).status,'found');assert.equal(store.userAlerts(logist)[0].payload.observed,true);assert.equal(Boolean(store.userAlerts(admin)[0].payload.observed),false);
  }finally{store.close();}
 });
 test('plan mode is validated, preserved on omitted update, cannot race a pending PUT, and rejects stale observation claims',()=>{
@@ -46,14 +46,30 @@ test('stopped dashboard warns even with no ready plans, and retains an actual st
 
 test('observation alert survives a later card failure in the same poll',async()=>{
  const {store,admin}=setup();try{
- store.saveRequest(input({observeOnly:true}),admin);enable(store,admin,0);let puts=0;
+ store.saveRequest(input({observeOnly:true}),admin);store.saveRequest(input({observeOnly:true,routeId:65522}),admin);enable(store,admin,0);let puts=0;
  const worker=new BotWorker(store,{fetchImpl:async(url,options)=>{
   if(options.method==='PUT')puts++;
-  if(url.endsWith('TO_DELIVERY'))return Response.json({data:[card,{...card,transport_request_id:101}]});
+  if(url.endsWith('TO_DELIVERY'))return Response.json({data:[card,{...card,route_id:65522,transport_request_id:101}]});
   if(url.endsWith('/101'))return Response.json({message:'Unavailable'},{status:503});
   return Response.json({data:card});
  }});
  await worker.tick();assert.equal(puts,0);assert.equal(store.userAlerts(admin).length,1);assert.equal(store.userAlerts(admin)[0].payload.id,100);
  assert.ok(store.botHistoryPage('logs',{q:'poll_failed'},admin).total);
+ }finally{store.close();}
+});
+
+
+test('observation stops after one of several available WB requests, survives acknowledgement and restart',async()=>{
+ const {store,admin}=setup();try{
+ const plan=store.saveRequest(input({observeOnly:true}),admin);enable(store,admin,0);let calls=0;
+ const worker=new BotWorker(store,{fetchImpl:async url=>{calls++;return Response.json({data:url.endsWith('TO_DELIVERY')?[card,{...card,transport_request_id:101}]:{...card,transport_request_id:Number(url.split('/').at(-1))}});}});
+ await worker.tick();const found=store.requests()[0];assert.equal(found.status,'found');assert.equal(found.found_wb_id,100);assert.equal(store.userAlerts(admin).length,1);assert.equal(calls,2);assert.equal(store.getBotStatus(admin).events.length,1);
+ assert.equal(store.notifyObservedCandidate({...card,id:102,routeId:61373},businessDate()),0);
+ store.acknowledgeAlert(store.userAlerts(admin)[0].id,admin);const before=calls;
+ await new BotWorker(store,{fetchImpl:async()=>{calls++;throw new Error('must not poll');}}).tick();assert.equal(calls,before);assert.equal(store.userAlerts(admin).length,0);
+ assert.throws(()=>store.saveRequest(input({version:found.version}),admin,plan.id),/только перенести в архив/);
+ assert.throws(()=>store.changeStatus(plan.id,'waiting',found.version,admin),/только перенести в архив/);
+ assert.equal(dashboard(store,admin).stats.active,0);assert.equal(dashboard(store,admin).upcoming.length,0);
+ assert.equal(store.changeStatus(plan.id,'archived',found.version,admin).status,'archived');
  }finally{store.close();}
 });

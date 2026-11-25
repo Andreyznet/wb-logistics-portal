@@ -74,6 +74,7 @@ export class BotWorker {
       const targets=payload.data.filter(row=>matches(row));const candidates=[];let denied=0;
       for(const [id,until]of this.deniedCards)if(until<=now.getTime())this.deniedCards.delete(id);
       for(const row of targets){if(controller.signal.aborted||generation!==this.generation)return;if(row.supplier_id!==null)continue;
+        if(!this.store.requests().some(p=>p.route_id===row.route_id&&p.status==='waiting'&&!p.accepted_wb_id&&monitoringDue(p,this.clock(),config.timeZone)))continue;
         if(this.deniedCards.has(row.transport_request_id)){denied++;continue;}
         let result;try{result=await this.get(`${API}/${row.transport_request_id}`,config.token,controller.signal);}catch(error){if(!error.cardDenied)throw error;denied++;if(this.deniedCards.size>=1000)this.deniedCards.delete(this.deniedCards.keys().next().value);this.deniedCards.set(row.transport_request_id,this.clock().getTime()+300000);this.store.recordBotLog('card_access_denied',{id:row.transport_request_id,routeId:row.route_id,httpStatus:403,message:error.message+' Карточка пропущена; повторная проверка через 5 минут. Бот продолжает работу.'});continue;}const card=result?.data;
         if(!card||card.transport_request_id!==row.transport_request_id||card.route_id!==row.route_id||!Object.hasOwn(card,'supplier_id')||typeof card.request_status!=='string'||typeof card.is_closed!=='boolean'||!card.car_dt||!Number.isFinite(Date.parse(card.car_dt)))throw new PollError('Неожиданная структура карточки WB.');

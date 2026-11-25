@@ -117,9 +117,11 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
     };if(inTransaction)persist();else transaction(persist);return {kind,payload,created_at:at};
   }
   function notifyObservedCandidate(candidate,today,at=new Date()){return transaction(()=>{
-    const plans=db.prepare("SELECT * FROM requests WHERE status='waiting' AND observe_only=1 AND route_id=? AND service_date<=?").all(candidate.routeId,today).filter(plan=>monitoringDue(plan,at,botConfig().timeZone));
+    const plans=db.prepare("SELECT * FROM requests WHERE status='waiting' AND found_wb_id IS NULL AND observe_only=1 AND route_id=? AND service_date<=?").all(candidate.routeId,today).filter(plan=>monitoringDue(plan,at,botConfig().timeZone));
     let delivered=0;
     for(const plan of plans){
+      db.prepare('UPDATE requests SET found_wb_id=?,version=version+1,updated_at=? WHERE id=? AND found_wb_id IS NULL').run(candidate.id,new Date(at).toISOString(),plan.id);
+      audit(plan.created_by,'request_found',plan.id,'Найдена заявка WB №'+candidate.id+'; мониторинг завершён.');
       const notice={observed:true,id:candidate.id,planId:plan.id,routeId:plan.route_id,routeName:candidate.routeName||'',carDt:candidate.carDt,driver:plan.driver_label,vehicle:plan.vehicle_label,trailer:plan.trailer_label||null,message:'Найдена подходящая заявка. Режим «Не брать в работу»: запрос принятия не отправлялся.'};
       const key=-parseInt(createHash('sha256').update('observe:'+plan.id+':'+candidate.id).digest('hex').slice(0,12),16);
       const recipients=db.prepare('SELECT id,name FROM users WHERE id=? OR id IN (SELECT user_id FROM request_watchers WHERE request_id=?)').all(plan.created_by,plan.id),author=recipients.find(u=>u.id===plan.created_by)?.name||'';

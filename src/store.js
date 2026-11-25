@@ -9,6 +9,7 @@ export class AppError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 export const fail = (status, message) => { throw new AppError(status, message); };
+export const SESSION_IDLE_MS=30*24*60*60*1000;
 export const hashSession = token => createHash('sha256').update(token).digest('hex');
 export function passwordHash(password) {
   const salt = randomBytes(16).toString('hex');
@@ -126,13 +127,13 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
   function createSession(userId) {
     const token = randomBytes(32).toString('base64url');
     db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
-    db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(hashSession(token), userId, Date.now() + 86400000);
+    db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(hashSession(token), userId, Date.now() + SESSION_IDLE_MS);
     return token;
   }
   function sessionExpiresAt(token){if(!token||token.length>200)return null;return db.prepare('SELECT s.expires_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.blocked=0').get(hashSession(token),Date.now())?.expires_at||null;}
   function renewSession(token){
     if(!token||token.length>200)return null;
-    const at=Date.now(),expiresAt=at+86400000;
+    const at=Date.now(),expiresAt=at+SESSION_IDLE_MS;
     const changed=db.prepare('UPDATE sessions SET expires_at=? WHERE token_hash=? AND expires_at>? AND user_id IN (SELECT id FROM users WHERE blocked=0)').run(expiresAt,hashSession(token),at);
     return changed.changes?expiresAt:null;
   }

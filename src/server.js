@@ -13,7 +13,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { timingSafeEqual } from 'node:crypto';
-import { openStore, AppError, fail, businessDate } from './store.js';
+import { openStore, AppError, fail, businessDate, SESSION_IDLE_MS } from './store.js';
 import { BotWorker } from './bot.js';
 
 const publicDir = resolve(dirname(fileURLToPath(import.meta.url)), '../public');
@@ -52,7 +52,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       'Content-Security-Policy':`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self';${framePolicy} base-uri 'none'; form-action 'self'`,
     };
     const json = (status, data, extra = {}) => { res.writeHead(status, {...headers,'Content-Type':'application/json; charset=utf-8',...extra}); res.end(JSON.stringify(data)); };
-    const cookie = value => `portal_session=${value}; HttpOnly; SameSite=${demoMode&&isSecure ? 'None' : 'Lax'}${isSecure ? '; Secure' : ''}; Path=/; Max-Age=${value ? 86400 : 0}`;
+    const cookie = value => `portal_session=${value}; HttpOnly; SameSite=${demoMode&&isSecure ? 'None' : 'Lax'}${isSecure ? '; Secure' : ''}; Path=/; Max-Age=${value ? SESSION_IDLE_MS/1000 : 0}`;
     try {
       if (!['GET','POST'].includes(req.method)) fail(405,'Метод не поддерживается.');
       if (req.method === 'POST' && req.headers.origin !== origin) fail(403,'Недопустимый источник запроса.');

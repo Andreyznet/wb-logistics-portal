@@ -301,20 +301,12 @@ async function flushSessionActivity(){
  if(!state.user||document.hidden||!sessionActivityPending||sessionActivityBusy||Date.now()-sessionActivitySent<60000)return;
  sessionActivityBusy=true;sessionActivityPending=false;
  const userId=state.user.id;
- try{const result=await api('/api/session/activity',{method:'POST',data:{}});if(state.user?.id===userId){state.session.sessionExpiresAt=result.sessionExpiresAt;sessionActivitySent=Date.now();document.querySelector('#session-expiry-warning')?.remove();}}
+ try{const result=await api('/api/session/activity',{method:'POST',data:{}});if(state.user?.id===userId){state.session.sessionExpiresAt=result.sessionExpiresAt;sessionActivitySent=Date.now();}}
  catch{sessionActivityPending=Boolean(state.user);}
  finally{sessionActivityBusy=false;}
 }
 for(const name of ['pointerdown','keydown','wheel','touchstart','scroll'])document.addEventListener(name,recordSessionActivity,{passive:true,capture:true});
-setInterval(()=>{
- void flushSessionActivity();
- const expires=state.session?.sessionExpiresAt,remaining=expires-Date.now();
- if(!state.user||!expires||remaining>15*60000){document.querySelector('#session-expiry-warning')?.remove();return;}
- if(document.hidden||document.querySelector('#session-expiry-warning'))return;
- const warning=document.createElement('div');warning.id='session-expiry-warning';warning.className='session-expiry-warning';warning.setAttribute('role','alert');
- warning.innerHTML='<span>Сессия скоро завершится после 24 часов бездействия. Продлите её, чтобы получать алерты в браузере.</span><button type="button" class="primary">Продолжить работу</button>';
- warning.querySelector('button').onclick=()=>{sessionActivitySent=0;sessionActivityPending=true;void flushSessionActivity();};document.body.append(warning);
-},15000);
+setInterval(()=>void flushSessionActivity(),15000);
 // End session activity
 
 boot();

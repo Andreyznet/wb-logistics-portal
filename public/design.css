@@ -2387,5 +2387,3 @@ dialog::backdrop {
 .badge.found{color:var(--accent,#e65300)}.badge.found::before{content:"✓";width:auto;height:auto;background:none;border-radius:0}
 
 .acceptance-success-mark.is-error{color:#dc3545;background:rgba(220,53,69,.12)}
-
-.session-expiry-warning{position:fixed;z-index:10000;top:12px;left:50%;transform:translateX(-50%);width:min(680px,calc(100% - 24px));padding:14px 18px;border:1px solid #e98132;border-radius:12px;background:var(--surface,#fff);color:var(--text,#10243a);box-shadow:0 8px 30px #0003;display:flex;align-items:center;gap:16px}.session-expiry-warning button{flex-shrink:0}@media(max-width:600px){.session-expiry-warning{flex-direction:column;align-items:stretch}}

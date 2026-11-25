@@ -2381,3 +2381,5 @@ dialog::backdrop {
 
 .staff-access-control{display:flex;align-items:center;gap:16px;padding:16px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.staff-access-control>div{flex:1;min-width:0}.staff-access-control strong{display:block;font-size:14px}.staff-access-control p{font-size:12px;line-height:1.5;color:var(--muted);margin:6px 0 0}.staff-access-control>button{flex:none}
 @media(max-width:600px){.staff-access-control{align-items:stretch;flex-direction:column;gap:12px}.staff-access-control>button{width:100%}}
+
+.monitor-start-row{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(80px,1fr);gap:8px}.monitor-start-row input{min-width:0;width:100%}

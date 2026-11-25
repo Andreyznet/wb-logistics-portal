@@ -111,7 +111,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         }
         if(path==='/api/catalog'&&!['catalog','requests'].some(k=>allowed(store,user,k)))fail(403,'Справочники недоступны.');
         if(['/api/bot/settings','/api/bot/status'].includes(path))check(method==='GET'?'bot':'bot.manage');
-        if(path==='/api/bot/test-alert')check('bot.manage');
+        if(['/api/bot/test-alert','/api/bot/test-recipients'].includes(path))check('bot.manage');
         if(path==='/api/bot/history/events')check('found');
         if(path==='/api/bot/history/logs')check('logs');
         if(/^\/api\/bot\/(attempts|snapshots)\/\d+$/.test(path))check('found.details');
@@ -130,7 +130,8 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
           return json(200,current?mobileSync(store,current.user,query,current):result);
         }
         if(url.pathname==='/api/knowledge'&&req.method==='GET')return json(200,{data:knowledgeFor(user.role)});
-        if(url.pathname==='/api/bot/test-alert'&&req.method==='POST'){const input=await body(req);return json(201,store.createTestAlert(input.planId??null,managerActor(user)));}
+        if(url.pathname==='/api/bot/test-recipients'&&req.method==='GET')return json(200,{data:store.users().filter(u=>!u.blocked).map(({id,name,role})=>({id,name,role}))});
+        if(url.pathname==='/api/bot/test-alert'&&req.method==='POST'){const input=await body(req);return json(201,store.createTestAlert(input.planId??null,managerActor(user),input.userId??null));}
         if(url.pathname==='/api/me/alerts'&&req.method==='GET')return json(200,{data:store.userAlerts(user)});
         const alertMatch=/^\/api\/me\/alerts\/(\d+)\/ack$/.exec(url.pathname);
         if(alertMatch&&req.method==='POST')return json(200,store.acknowledgeAlert(Number(alertMatch[1]),user));

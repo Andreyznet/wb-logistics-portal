@@ -44,6 +44,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     db.exec("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE;");
     try{db.exec("CREATE TABLE users_roles(id INTEGER PRIMARY KEY,username TEXT UNIQUE NOT NULL,name TEXT NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('super_admin','admin','logist')),created_at TEXT NOT NULL); INSERT INTO users_roles SELECT * FROM users; UPDATE users_roles SET role='super_admin' WHERE id=(SELECT min(id) FROM users_roles WHERE role='admin'); DROP TABLE users; ALTER TABLE users_roles RENAME TO users; COMMIT;");}catch(e){db.exec('ROLLBACK');throw e;}finally{db.exec('PRAGMA foreign_keys=ON');}
   }
+  if(!db.prepare('PRAGMA table_info(requests)').all().some(c=>c.name==='service_time'))db.exec("ALTER TABLE requests ADD COLUMN service_time TEXT NOT NULL DEFAULT '00:00'");
   if(!db.prepare('PRAGMA table_info(users)').all().some(c=>c.name==='blocked'))db.exec('ALTER TABLE users ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0');
   db.exec('CREATE TABLE IF NOT EXISTS user_avatars(user_id INTEGER PRIMARY KEY REFERENCES users(id),preset TEXT,image BLOB,mime TEXT,revision TEXT NOT NULL)');
   db.exec("CREATE TABLE IF NOT EXISTS user_notification_settings(user_id INTEGER PRIMARY KEY REFERENCES users(id),sound_id TEXT NOT NULL,volume INTEGER NOT NULL)");
@@ -193,6 +194,8 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     if(typeof observeOnly!=='boolean')fail(400,'Укажите корректный режим «Не брать в работу».');
     const routeId = integer(input.routeId);
     const date = input.serviceDate;
+    const time = input.serviceTime??old?.service_time??'00:00';
+    if(typeof time!=='string'||!/^([01]\d|2[0-3]):[0-5]\d$/.test(time))fail(400,'Укажите время начала мониторинга в формате ЧЧ:ММ.');
     const priority = integer(input.priority ?? 1);
     const driverId = integer(input.driverId), vehicleId = integer(input.vehicleId);
     const trailerId = input.trailerId == null || input.trailerId === '' ? null : integer(input.trailerId);
@@ -201,7 +204,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     if (date < businessDate(timeZone) && date !== old?.service_date) fail(400, 'Дата подачи не может быть в прошлом.');
     if (!priority || priority > 99) fail(400, 'Приоритет должен быть от 1 до 99.');
     if (!driverId || !vehicleId || input.trailerId && !trailerId) fail(400, 'Выберите водителя, автомобиль и корректный прицеп.');
-    return { observeOnly,routeId, date, priority, driverId, vehicleId, trailerId,
+    return { observeOnly,routeId, date, time, priority, driverId, vehicleId, trailerId,
       driverLabel: entry('driver', driverId), vehicleLabel: entry('vehicle', vehicleId),
       trailerLabel: trailerId ? entry('trailer', trailerId) : null, note: clean(input.note, 1000) };
   }
@@ -230,6 +233,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
       } else {
         id = Number(db.prepare("INSERT INTO requests(observe_only,route_id,service_date,priority,driver_id,vehicle_id,trailer_id,driver_label,vehicle_label,trailer_label,note,status,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,'waiting',?,?,?)").run(Number(v.observeOnly),v.routeId,v.date,v.priority,v.driverId,v.vehicleId,v.trailerId,v.driverLabel,v.vehicleLabel,v.trailerLabel,v.note,actor.id,at,at).lastInsertRowid);
       }
+      db.prepare('UPDATE requests SET service_time=? WHERE id=?').run(v.time,id);
       audit(actor.id, old ? 'request_updated' : 'request_created', id, `Маршрут ${v.routeId}, ${v.date}`);
       return getRequest(id);
     });
@@ -265,7 +269,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
   return { notificationSettings,saveNotificationSettings,...botStore, db, timeZone, userCount, addUser, updateUser, saveAvatar, getAvatar, login, createSession, session, importDirectory, catalog, catalogSummary, catalogPage, cacheCatalogRows, saveRequest, changeStatus, watchRequest,
     logout: token => db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hashSession(token || '')),
     users: () => db.prepare('SELECT id,username,name,role,created_at,blocked FROM users ORDER BY name').all().map(user=>({...user,avatar:avatarUrl(user.id)})),
-    requests: (actor=null) => db.prepare("SELECT r.*,(SELECT label FROM catalog c WHERE c.kind='route' AND c.id=r.route_id) AS route_name,u.name AS created_by_name,EXISTS(SELECT 1 FROM request_watchers w WHERE w.request_id=r.id AND w.user_id=?) AS watching,(SELECT a.id FROM acceptance_attempts a WHERE a.plan_id=r.id AND a.state='success' ORDER BY a.updated_at DESC LIMIT 1) AS accepted_wb_id FROM requests r JOIN users u ON r.created_by=u.id ORDER BY r.service_date,r.priority,r.id").all(actor?.id||0),
+    requests: (actor=null) => db.prepare("SELECT r.*,(SELECT label FROM catalog c WHERE c.kind='route' AND c.id=r.route_id) AS route_name,u.name AS created_by_name,EXISTS(SELECT 1 FROM request_watchers w WHERE w.request_id=r.id AND w.user_id=?) AS watching,(SELECT a.id FROM acceptance_attempts a WHERE a.plan_id=r.id AND a.state='success' ORDER BY a.updated_at DESC LIMIT 1) AS accepted_wb_id FROM requests r JOIN users u ON r.created_by=u.id ORDER BY r.service_date,r.service_time,r.priority,r.id").all(actor?.id||0),
     activity: () => db.prepare('SELECT a.*,u.name AS actor FROM audit a LEFT JOIN users u ON a.user_id=u.id ORDER BY a.id DESC LIMIT 200').all(),
     close: () => db.close(),
   };

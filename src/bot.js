@@ -1,3 +1,4 @@
+import {monitoringDue} from './monitoring-time.js';
 import { LiveAcceptance } from './live-acceptance.js';
 import { monitoredFetch } from './api-monitor.js';
 const API='https://logistics.wb.ru/transport-requests-service/api/v1/transport-requests';
@@ -49,7 +50,7 @@ export class BotWorker {
     if(!config.enabled){this.controller?.abort();this.store.setBotRuntime({state:'stopped',nextPollAt:null,warning:null});return;}
     if(false){this.controller?.abort();this.store.setBotRuntime({state:'outside_schedule',nextPollAt:null});return;}
     const today=localParts(now,config.timeZone).date;
-    const plans=this.store.requests().filter(row=>row.status==='waiting'&&row.service_date<=today);
+    const plans=this.store.requests().filter(row=>row.status==='waiting'&&!row.accepted_wb_id&&monitoringDue(row,now,config.timeZone));
     if(!plans.length&&!this.store.pendingAcceptances().length){this.controller?.abort();if(this.lastIdleReason!=='no_plans')this.store.recordBotLog('no_plans',{message:'Нет активных планов с наступившей датой начала мониторинга. Запросы WB не отправляются.'});this.lastIdleReason='no_plans';this.store.setBotRuntime({state:'no_plans',nextPollAt:null});return;}
     this.lastIdleReason=null;
     const exp=(()=>{try{return JSON.parse(Buffer.from(config.token.split('.')[1],'base64url').toString()).exp;}catch{return null;}})();
@@ -87,7 +88,7 @@ export class BotWorker {
         candidate.previewNote=candidate.curl?(!candidate.observeOnly?'Команда сформирована; результат реального запроса — в журнале принятия.':'Только текст команды. Запрос принятия не отправлен.'):'Команда не сформирована: требуется подтвердить поле прицепа в API WB.';
       }
       const events=this.store.recordBotCandidates(candidates,{source:`${API}?filter=TO_DELIVERY`,method:'GET',receivedAt:listReceivedAt,candidateIds:candidates.map(c=>c.id),response:payload});
-      for(const candidate of candidates)this.store.notifyObservedCandidate(candidate,today);
+      for(const candidate of candidates)this.store.notifyObservedCandidate(candidate,today,this.clock());
       for(const candidate of candidates){if(controller.signal.aborted||generation!==this.generation)break;await this.live.take(candidate,config.token,controller.signal,today);}
       this.store.recordBotLog('poll_completed',{routes:[...new Set(plans.map(p=>p.route_id))],total:payload.data.length,targetRecords:targets.length,candidates:candidates.length,newEvents:events,deniedCards:denied});this.failures=0;this.nextAt=this.clock().getTime()+config.intervalSeconds*1000;
       this.store.setBotRuntime({state:'waiting',lastSuccessAt:this.clock().toISOString(),nextPollAt:new Date(this.nextAt).toISOString(),total:payload.data.length,targetRecords:targets.length,candidates:candidates.length,newEvents:events,monitoredRoutes:new Set(plans.map(p=>p.route_id)).size,deniedCards:denied,warning:denied?'Нет доступа к карточкам: '+denied+'. Они пропущены; мониторинг остальных продолжается.':null,error:null});

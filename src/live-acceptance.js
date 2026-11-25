@@ -1,3 +1,4 @@
+import {monitoringDue} from './monitoring-time.js';
 const API='https://logistics.wb.ru/transport-requests-service/api/v1/transport-requests';
 export class LiveAcceptance {
  constructor(store,worker){this.store=store;this.worker=worker;}
@@ -13,7 +14,7 @@ export class LiveAcceptance {
  }
  async take(candidate,token,signal,today){
   const config=this.store.botConfig();if(!config.enabled||signal.aborted)return;
-  const plans=this.store.requests().filter(p=>p.status==='waiting'&&!p.observe_only&&p.service_date<=today&&p.route_id===candidate.routeId).sort((a,b)=>a.priority-b.priority||a.id-b.id);
+  const plans=this.store.requests().filter(p=>p.status==='waiting'&&!p.observe_only&&monitoringDue(p,this.worker.clock(),config.timeZone)&&p.route_id===candidate.routeId).sort((a,b)=>a.priority-b.priority||a.id-b.id);
   if(plans.length&&(!Number.isSafeInteger(config.supplierId)||config.supplierId<=0)){const error=new Error('Укажите ID компании в настройках бота перед принятием заявок.');error.stop=true;throw error;}
   let expected,plan;
   for(const p of plans){if(p.trailer_id){this.store.recordBotLog('acceptance_error',{id:candidate.id,routeId:candidate.routeId,message:'Принятие с прицепом отключено: поле API ещё не подтверждено.'});continue;}const e=this.store.claimAcceptance(candidate.id,p,this.worker.clock().getTime());if(e){expected=e;plan=p;break;}}

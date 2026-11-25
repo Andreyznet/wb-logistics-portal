@@ -1,9 +1,10 @@
+import {monitoringDue} from './monitoring-time.js';
 export function createAcceptanceStore({db,transaction,botConfig,recordAcceptanceResult,audit,fail}){
  db.exec(`CREATE TABLE IF NOT EXISTS acceptance_attempts(id INTEGER PRIMARY KEY,plan_id INTEGER NOT NULL,driver_id INTEGER NOT NULL,vehicle_id INTEGER NOT NULL,state TEXT NOT NULL,tries INTEGER NOT NULL,updated_at INTEGER NOT NULL,retry_at INTEGER NOT NULL,expected TEXT NOT NULL,response TEXT);`);
  const pending=()=>db.prepare("SELECT * FROM acceptance_attempts WHERE state IN ('pending','uncertain')").all().map(row=>({...row,expected:JSON.parse(row.expected)}));
  function claim(id,plan,now){return transaction(()=>{
   const config=botConfig(),fresh=db.prepare('SELECT * FROM requests WHERE id=?').get(plan.id);
-  if(!config.enabled||!fresh||fresh.status!=='waiting'||fresh.observe_only||config.supplierId<=0||fresh.version!==plan.version)return null;
+  if(!config.enabled||!fresh||fresh.status!=='waiting'||fresh.observe_only||!monitoringDue(fresh,new Date(now),config.timeZone)||config.supplierId<=0||fresh.version!==plan.version)return null;
   if(fresh.trailer_id)return null;
   const old=db.prepare('SELECT * FROM acceptance_attempts WHERE id=?').get(id);
   if(old&&(old.state!=='failed'||old.tries>=3||old.retry_at>now))return null;

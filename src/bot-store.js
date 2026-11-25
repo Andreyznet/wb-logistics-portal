@@ -1,3 +1,4 @@
+import {monitoringDue} from './monitoring-time.js';
 import { randomBytes, createCipheriv, createDecipheriv, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import {createBotHistory} from './bot-history.js';
@@ -115,8 +116,8 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
       }
     };if(inTransaction)persist();else transaction(persist);return {kind,payload,created_at:at};
   }
-  function notifyObservedCandidate(candidate,today){return transaction(()=>{
-    const plans=db.prepare("SELECT * FROM requests WHERE status='waiting' AND observe_only=1 AND route_id=? AND service_date<=?").all(candidate.routeId,today);
+  function notifyObservedCandidate(candidate,today,at=new Date()){return transaction(()=>{
+    const plans=db.prepare("SELECT * FROM requests WHERE status='waiting' AND observe_only=1 AND route_id=? AND service_date<=?").all(candidate.routeId,today).filter(plan=>monitoringDue(plan,at,botConfig().timeZone));
     let delivered=0;
     for(const plan of plans){
       const notice={observed:true,id:candidate.id,planId:plan.id,routeId:plan.route_id,routeName:candidate.routeName||'',carDt:candidate.carDt,driver:plan.driver_label,vehicle:plan.vehicle_label,trailer:plan.trailer_label||null,message:'Найдена подходящая заявка. Режим «Не брать в работу»: запрос принятия не отправлялся.'};
@@ -128,10 +129,12 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
   });}
   function userAlerts(actor){if(!actor?.id)fail(401,'Войдите в аккаунт.');return db.prepare('SELECT id,payload,created_at FROM acceptance_alerts WHERE user_id=? AND ack_at IS NULL ORDER BY id LIMIT 30').all(actor.id).map(r=>({...r,payload:JSON.parse(r.payload)}));}
   function acknowledgeAlert(id,actor){if(!actor?.id)fail(401,'Войдите в аккаунт.');const row=db.prepare('SELECT id FROM acceptance_alerts WHERE id=? AND user_id=?').get(id,actor.id);if(!row)fail(404,'Уведомление не найдено.');db.prepare('UPDATE acceptance_alerts SET ack_at=COALESCE(ack_at,?) WHERE id=?').run(new Date().toISOString(),id);return {ok:true};}
-  function createTestAlert(planId,actor){
+  function createTestAlert(planId,actor,recipientId=null){
     requireAdmin(actor);let plan=null;
     if(planId!=null){if(!Number.isSafeInteger(planId)||planId<1)fail(400,'Выберите план.');plan=db.prepare('SELECT * FROM requests WHERE id=?').get(planId);if(!plan)fail(404,'План не найден.');}
-    const userId=plan?.created_by||actor.id,owner=db.prepare('SELECT name FROM users WHERE id=?').get(userId);
+    if(recipientId!==null&&(!Number.isSafeInteger(recipientId)||recipientId<1))fail(400,'Выберите сотрудника.');
+    const userId=recipientId??plan?.created_by??actor.id,owner=db.prepare('SELECT name,blocked FROM users WHERE id=?').get(userId);
+    if(!owner)fail(404,'Сотрудник не найден.');if(owner.blocked)fail(403,'Сотрудник заблокирован.');
     const payload={test:true,observed:Boolean(plan?.observe_only),id:'ТЕСТ',planId:plan?.id||'—',routeId:plan?.route_id||61373,routeName:'Проверка уведомления — заявка WB не принималась',carDt:new Date().toISOString(),driver:plan?.driver_label||'Тестовый водитель',vehicle:plan?.vehicle_label||'Тестовый автомобиль',trailer:plan?.trailer_label||null};
     const result=db.prepare('INSERT INTO acceptance_alerts(user_id,request_id,payload,created_at) VALUES(?,?,?,?)').run(userId,-randomBytes(6).readUIntBE(0,6),JSON.stringify(payload),new Date().toISOString());
     audit(actor.id,'test_alert_created',plan?.id||null,'Тест звука и окна для '+owner.name);return {id:Number(result.lastInsertRowid),recipient:owner.name};

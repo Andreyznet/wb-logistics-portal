@@ -13,7 +13,7 @@ public final class MonitorService extends Service {
     static final String CH_SERVICE="duty",CH_ALERT="assignments",CH_EVENTS="bot_events",UPDATE="ru.rostprom.marshrut.UPDATE";
     private ScheduledExecutorService executor;private NotificationManager notifications;private PowerManager.WakeLock wakeLock;
     private final AlarmPlayer alarm=new AlarmPlayer();private volatile boolean stopped=false;private int networkFailures=0;private volatile long retryAt=0;
-    private final Set<Integer> shown=ConcurrentHashMap.newKeySet();private boolean scheduled=false;private ScheduledFuture<?> polling;private volatile int latestStartId;private final Object ackLock=new Object();
+    private final Set<Integer> shown=ConcurrentHashMap.newKeySet();private boolean scheduled=false;private ScheduledFuture<?> polling;private volatile int latestStartId;
     @Override public void onCreate(){
         super.onCreate();DeviceAuth.init(this);notifications=getSystemService(NotificationManager.class);
         NotificationChannel duty=new NotificationChannel(CH_SERVICE,"Фоновая связь",NotificationManager.IMPORTANCE_LOW);duty.setSound(null,null);
@@ -26,18 +26,17 @@ public final class MonitorService extends Service {
     }
     private PendingIntent openPortal(){return PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);}
     private Notification duty(String text){
-        PendingIntent stop=PendingIntent.getService(this,1,new Intent(this,MonitorService.class).setAction("STOP"),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-        return new Notification.Builder(this,CH_SERVICE).setSmallIcon(R.drawable.ic_notification).setContentTitle("Маршрут · фоновая связь").setContentText(text).setContentIntent(openPortal()).setOngoing(true).setOnlyAlertOnce(true).addAction(new Notification.Action.Builder(null,"Отключить фон",stop).build()).build();
+        return new Notification.Builder(this,CH_SERVICE).setSmallIcon(R.drawable.ic_notification).setContentTitle("Маршрут · фоновая связь").setContentText(text).setContentIntent(openPortal()).setOngoing(true).setOnlyAlertOnce(true).addAction(new Notification.Action.Builder(null,"Открыть приложение",openPortal()).build()).build();
     }
     @Override public int onStartCommand(Intent intent,int flags,int startId){
         latestStartId=startId;
+        if(intent!=null&&"ACK".equals(intent.getAction())){long id=intent.getLongExtra("id",0);Prefs.acknowledge(this,id);ReceiptJob.schedule(this);PortalApi.cancelWait();retryAt=0;alarm.stop();notifications.cancel(alertId(id));}
+
         if(intent!=null&&"STOP".equals(intent.getAction())){Prefs.get(this).edit().putBoolean("enabled",false).apply();PushRegistration.ensure(this,true);stopSelf();return START_NOT_STICKY;}
         if(!Prefs.enabled(this)||(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)){stopSelf();return START_NOT_STICKY;}
         if(Build.VERSION.SDK_INT>=34)startForeground(1,duty("Подключаемся к порталу…"),ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);else startForeground(1,duty("Подключаемся к порталу…"));
         Prefs.get(this).edit().putBoolean("running",true).apply();
         if(intent!=null&&"ACK".equals(intent.getAction())){
-            long id=intent.getLongExtra("id",0);PortalApi.cancelWait();retryAt=0;alarm.stop();notifications.cancel(alertId(id));
-            synchronized(ackLock){Set<String> acks=new HashSet<>(Prefs.get(this).getStringSet("acks",Collections.emptySet()));acks.add(Long.toString(id));Prefs.get(this).edit().putStringSet("acks",acks).apply();}
             executor.execute(this::sync);
         }else if(intent!=null&&("REFRESH".equals(intent.getAction())||"PUSH".equals(intent.getAction()))){PortalApi.cancelWait();retryAt=0;executor.execute(this::sync);}
         if(pushReady()){
@@ -67,6 +66,7 @@ public final class MonitorService extends Service {
         if(credential.isEmpty()){failure("Подключите телефон: откройте приложение и войдите в кабинет.");stopSelf();return;}
         try {
             wakeLock.acquire(10*60*1000L);
+            if(!ReceiptJob.flush(this,credential))ReceiptJob.schedule(this);
             Prefs.get(this).edit().putLong("lastAttempt",System.currentTimeMillis()).apply();
             String cursor=Prefs.get(this).getString("cursor","");
             String session=DeviceAuth.token();
@@ -79,10 +79,6 @@ public final class MonitorService extends Service {
             long previous=Prefs.get(this).getLong("user",0);
             if(previous!=0&&previous!=user){alarm.stop();notifications.cancelAll();shown.clear();Prefs.clearAccount(this);cursor="";data=PortalApi.call("mobile/sync",false);}
             Prefs.get(this).edit().putLong("user",user).apply();
-            Set<String> pending=new HashSet<>(Prefs.get(this).getStringSet("acks",Collections.emptySet()));
-            Set<String> acknowledged=new HashSet<>(pending);
-            for(String id:new HashSet<>(pending))try{if(stopped||!credential.equals(DeviceAuth.token()))return;PortalApi.call("mobile/alerts/"+id+"/ack",true,credential);pending.remove(id);}catch(PortalApi.ApiException e){if(e.status==404)pending.remove(id);else throw e;}
-            synchronized(ackLock){Set<String> latest=new HashSet<>(Prefs.get(this).getStringSet("acks",Collections.emptySet()));Set<String> done=new HashSet<>(acknowledged);done.removeAll(pending);latest.removeAll(done);Prefs.get(this).edit().putStringSet("acks",latest).apply();}
             JSONArray entries=data.getJSONArray("events");for(int i=0;i<entries.length();i++){JSONObject e=entries.getJSONObject(i);event(e.getLong("id"),e.getString("kind"),e.optString("message"));}
             JSONObject bot=data.getJSONObject("bot");String status=bot.getBoolean("enabled")?"Бот запущен":"Бот остановлен";
             if(bot.optInt("apiErrors")>0)status+=" · ошибки API: "+bot.getInt("apiErrors");
@@ -92,7 +88,7 @@ public final class MonitorService extends Service {
             JSONArray alerts=data.getJSONArray("alerts"),queue=new JSONArray();Set<Integer> current=new HashSet<>();
             for(int i=0;i<alerts.length();i++){
                 if(stopped||!credential.equals(DeviceAuth.token()))return;
-                JSONObject a=alerts.getJSONObject(i);long id=a.getLong("id");if(acknowledged.contains(Long.toString(id))||Prefs.get(this).getStringSet("acks",Collections.emptySet()).contains(Long.toString(id)))continue;
+                JSONObject a=alerts.getJSONObject(i);long id=a.getLong("id");if(Prefs.acknowledged(this,id))continue;
                 queue.put(a);current.add(alertId(id));JSONObject p=a.getJSONObject("payload");
                 if(!shown.contains(alertId(id))){
                     String title=p.optBoolean("test")?"Тест уведомления":p.optBoolean("observed")?"Найдена заявка":"Заявка взята в работу";
@@ -103,19 +99,20 @@ public final class MonitorService extends Service {
                     notifications.notify(alertId(id),new Notification.Builder(this,CH_ALERT).setSmallIcon(R.drawable.ic_notification).setContentTitle(title).setContentText(text).setStyle(new Notification.BigTextStyle().bigText(text)).setContentIntent(tap).setOngoing(true).setCategory(Notification.CATEGORY_EVENT).setVisibility(Notification.VISIBILITY_PRIVATE).addAction(new Notification.Action.Builder(null,"ОК",ack).build()).build());
                 }
             }
+            queue=Prefs.saveQueue(this,queue);Set<Integer> visible=new HashSet<>();for(int i=0;i<queue.length();i++)visible.add(alertId(queue.getJSONObject(i).getLong("id")));for(int id:current)if(!visible.contains(id))notifications.cancel(id);current=visible;
             for(int old:shown)if(!current.contains(old))notifications.cancel(old);shown.clear();shown.addAll(current);
-            Prefs.get(this).edit().putString("queue",queue.toString()).putString("revision",data.optString("revision","")).putString("cursor",Long.toString(data.getLong("cursor"))).putString("bot",status).putLong("lastSync",System.currentTimeMillis()).remove("connectionError").apply();
+            Prefs.get(this).edit().putString("revision",data.optString("revision","")).putString("cursor",Long.toString(data.getLong("cursor"))).putString("bot",status).putLong("lastSync",System.currentTimeMillis()).remove("connectionError").apply();
             JSONObject settings=data.getJSONObject("notification");
             if(stopped)return;
             if(queue.length()>0&&notifications.getNotificationChannel(CH_ALERT).getImportance()!=NotificationManager.IMPORTANCE_NONE){
                 if(Build.VERSION.SDK_INT>=34)startForeground(1,duty(status),ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE|ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
-                JSONObject first=queue.getJSONObject(0);alarm.play(this,Long.toString(first.getLong("id")),settings.optString("soundId","pulse-alarm"),settings.optInt("volume",100));
+                JSONObject first=queue.getJSONObject(0);synchronized(Prefs.class){if(!Prefs.acknowledged(this,first.getLong("id")))alarm.play(this,Long.toString(first.getLong("id")),settings.optString("soundId","pulse-alarm"),settings.optInt("volume",100));else alarm.stop();}
             }else{alarm.stop();if(Build.VERSION.SDK_INT>=34)startForeground(1,duty(status),ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);}
             notifications.notify(1,duty(status));
             if(networkFailures>=2)event(99996,"api_recovered","Связь приложения с порталом восстановлена.");networkFailures=0;retryAt=0;
             sendBroadcast(new Intent(UPDATE).setPackage(getPackageName()));
             if(pushReady()&&queue.length()==0&&Prefs.get(this).getStringSet("acks",Collections.emptySet()).isEmpty()&&!data.optBoolean("hasMore"))stopSelfResult(syncStartId);
-            else if(pushReady()&&data.optBoolean("hasMore"))executor.execute(this::sync);
+            else if(pushReady()&&(data.optBoolean("hasMore")||!Prefs.get(this).getStringSet("acks",Collections.emptySet()).isEmpty()))executor.execute(this::sync);
         }catch(PortalApi.WaitCancelled ignored){return;}catch(PortalApi.ApiException e){
             if(stopped)return;
             if(e.status==401){alarm.stop();AccountAccess.revoke(this,credential);stopSelf();}

@@ -5,10 +5,11 @@ export class LiveAcceptance {
  confirmed(card,id,e){return card?.transport_request_id===id&&card.route_id===e.routeId&&card.supplier_id===e.supplierId&&card.driver_id===e.driverId&&card.vehicle_id===e.vehicleId;}
  async reconcile(token,signal){
   for(const attempt of this.store.pendingAcceptances()){
+   if(attempt.response&&JSON.parse(attempt.response).httpStatus===429&&attempt.retry_at>this.worker.clock().getTime())continue;
    if((this.worker.deniedCards?.get(attempt.id)||0)>this.worker.clock().getTime())continue;
    let result;try{result=await this.worker.get(`${API}/${attempt.id}`,token,signal);}catch(error){if(!error.cardDenied)throw error;this.worker.deniedCards?.set(attempt.id,this.worker.clock().getTime()+300000);this.store.recordBotLog('card_access_denied',{id:attempt.id,httpStatus:403,message:error.message+' Результат прежнего принятия остаётся неизвестным; повторный PUT не отправлен.'});continue;}const card=result?.data,e=attempt.expected;
    if(this.confirmed(card,attempt.id,e))this.store.finishAcceptance(attempt.id,e,200,result,'success',this.worker.clock().getTime());
-   else if(card?.transport_request_id===attempt.id&&card.supplier_id!=null)this.store.finishAcceptance(attempt.id,e,409,{error:{message:'Карточка назначена другому перевозчику или экипажу.'},data:card},'rejected',this.worker.clock().getTime());
+   else if(card?.transport_request_id===attempt.id&&card.route_id===e.routeId&&card.supplier_id!=null)this.store.finishAcceptance(attempt.id,e,409,{error:{message:'Карточка назначена другому перевозчику или экипажу.'},data:card},'rejected',this.worker.clock().getTime());
    // An unassigned card alone is not proof that an interrupted PUT never took effect.
   }
  }
@@ -27,8 +28,9 @@ export class LiveAcceptance {
    status=res.status;
    const text=(await res.text()).replaceAll(token,'[скрыто]');try{response=JSON.parse(text);}catch{response={error:{message:'WB вернул не JSON. Результат принятия неизвестен.'},raw:text};}
    if(res.ok&&response?.success!==false&&this.confirmed(response?.data,candidate.id,expected))finalState='success';
-   else if(status===429){finalState='failed';const retry=res.headers.get('retry-after');delay=Math.max(60000,/^\d+$/.test(retry||'')?Number(retry)*1000:(Date.parse(retry)-this.worker.clock().getTime())||60000);}
+   else if(status===429){finalState='uncertain';const retry=res.headers.get('retry-after');delay=Math.max(60000,/^\d+$/.test(retry||'')?Number(retry)*1000:(Date.parse(retry)-this.worker.clock().getTime())||60000);}
    else if(status>=400&&status<500){finalState=[408].includes(status)?'uncertain':[401,403,409].includes(status)?'failed':'rejected';}
+   if(status===429)response={...response,error:{...response?.error,message:'WB вернул HTTP 429. Результат принятия неизвестен; повторный PUT запрещён до подтверждения состояния заявки.'}};
    stop=[401,403].includes(status)||(status>=300&&status<400);
   }catch{response={error:{message:'Связь прервана. Результат принятия неизвестен; автоматический повтор запрещён до проверки WB.'}};}
   if(finalState==='uncertain'&&!response?.error?.message)response={...response,error:{message:'WB не подтвердил назначение. Результат неизвестен; требуется проверка карточки.'}};

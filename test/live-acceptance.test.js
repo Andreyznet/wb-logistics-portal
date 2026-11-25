@@ -56,3 +56,33 @@ test('admin may delete discovery for replay without clearing pending acceptance 
 test('success result, owner alert and plan pause roll back together on a storage failure',()=>{
  const {store,admin}=setup();try{const plan=store.requests()[0],expected=store.claimAcceptance(777,plan,Date.now());store.db.exec("CREATE TRIGGER reject_pause BEFORE UPDATE OF status ON requests BEGIN SELECT RAISE(ABORT, 'test storage failure'); END;");assert.throws(()=>store.finishAcceptance(777,expected,200,{data:assigned(777)},'success',Date.now()),/test storage failure/);assert.equal(store.requests()[0].status,'waiting');assert.equal(store.requests()[0].accepted_wb_id,null);assert.equal(store.getBotStatus(admin).outcomes.length,0);assert.equal(store.userAlerts(admin).length,0);assert.equal(store.pendingAcceptances().length,1);}finally{store.close();}
 });
+
+
+test('429 stays uncertain after cooldown even when GET reports unassigned, then confirms assignment without another PUT',async()=>{
+ const {store,admin}=setup();let puts=0,gets=0,now=new Date(),accepted=false;
+ const worker=new BotWorker(store,{clock:()=>now,fetchImpl:async(url,options)=>{
+  if(options.method==='PUT'){puts++;return Response.json({error:{message:'Rate limit'}},{status:429,headers:{'Retry-After':'180'}});}
+  if(!url.endsWith('TO_DELIVERY'))gets++;
+  return Response.json({data:url.endsWith('TO_DELIVERY')?[row(100)]:(accepted?assigned(100):row(100))});
+ }});
+ try{
+ await worker.tick();assert.equal(store.getAcceptanceAttempt(100,admin).state,'uncertain');assert.equal(puts,1);
+ assert.equal(store.claimAcceptance(101,store.requests()[0],now.getTime()+200000),null,'unknown result reserves crew');
+ const before=gets;now=new Date(now.getTime()+61000);await worker.tick();assert.equal(gets,before);
+ now=new Date(now.getTime()+180000);await worker.tick();assert.equal(puts,1);assert.equal(store.getAcceptanceAttempt(100,admin).state,'uncertain');
+ accepted=true;now=new Date(now.getTime()+61000);await worker.tick();assert.equal(puts,1);assert.equal(store.getAcceptanceAttempt(100,admin).state,'success');assert.equal(store.userAlerts(admin).length,1);
+ }finally{store.close();}
+});
+
+test('legacy failed 429 is migrated on restart and failed verification never unlocks a second PUT',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'wb-429-')),file=join(dir,'portal.sqlite');let {store,admin}=setup(file);let now=new Date(),puts=0;
+ try{
+ const plan=store.requests()[0],expected=store.claimAcceptance(100,plan,now.getTime());
+ store.finishAcceptance(100,expected,429,{error:{message:'Rate limit'}},'failed',now.getTime(),180000);
+ assert.equal(store.getAcceptanceAttempt(100,admin).state,'uncertain','store must prevent callers making 429 retryable');
+ store.db.prepare("UPDATE acceptance_attempts SET state='failed' WHERE id=100").run();store.close();({store,admin}=setup(file));
+ assert.equal(store.getAcceptanceAttempt(100,admin).state,'uncertain');now=new Date(now.getTime()+181000);
+ const worker=new BotWorker(store,{clock:()=>now,fetchImpl:async(url,options)=>{if(options.method==='PUT')puts++;return Response.json({error:{message:'Unavailable'}},{status:503});}});
+ await worker.tick();assert.equal(puts,0);assert.equal(store.getAcceptanceAttempt(100,admin).state,'uncertain');assert.equal(store.claimAcceptance(100,store.requests()[0],now.getTime()),null);
+ }finally{store.close();await rm(dir,{recursive:true,force:true});}
+});

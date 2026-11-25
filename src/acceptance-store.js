@@ -1,6 +1,8 @@
 import {monitoringDue} from './monitoring-time.js';
 export function createAcceptanceStore({db,transaction,botConfig,recordAcceptanceResult,audit,fail}){
  db.exec(`CREATE TABLE IF NOT EXISTS acceptance_attempts(id INTEGER PRIMARY KEY,plan_id INTEGER NOT NULL,driver_id INTEGER NOT NULL,vehicle_id INTEGER NOT NULL,state TEXT NOT NULL,tries INTEGER NOT NULL,updated_at INTEGER NOT NULL,retry_at INTEGER NOT NULL,expected TEXT NOT NULL,response TEXT);`);
+ // Older versions made 429 retryable. Restore the durable unknown-result lock before any claim.
+ db.exec("UPDATE acceptance_attempts SET state='uncertain' WHERE state='failed' AND json_extract(CASE WHEN json_valid(response) THEN response ELSE '{}' END,'$.httpStatus')=429");
  const pending=()=>db.prepare("SELECT * FROM acceptance_attempts WHERE state IN ('pending','uncertain')").all().map(row=>({...row,expected:JSON.parse(row.expected)}));
  function claim(id,plan,now){return transaction(()=>{
   const config=botConfig(),fresh=db.prepare('SELECT * FROM requests WHERE id=?').get(plan.id);
@@ -16,7 +18,7 @@ export function createAcceptanceStore({db,transaction,botConfig,recordAcceptance
   // The durable pending intent continues to reserve the crew until result and plan updates are persisted.
   return transaction(()=>{
   const result=recordAcceptanceResult({id,routeId:expected.routeId,httpStatus,response,expected,inTransaction:true});
-  const finalState=result.kind==='acceptance_success'?'success':state;
+  const finalState=result.kind==='acceptance_success'?'success':httpStatus===429?'uncertain':state;
   db.prepare('UPDATE acceptance_attempts SET state=?,updated_at=?,retry_at=?,response=? WHERE id=?').run(finalState,now,now+retryDelay,JSON.stringify({httpStatus,response}),id);
    if(finalState==='success'){
     db.prepare("UPDATE requests SET status='paused',version=version+1,updated_at=? WHERE status='waiting' AND observe_only=0 AND (id=? OR driver_id=? OR vehicle_id=?)").run(new Date(now).toISOString(),expected.planId,expected.driverId,expected.vehicleId);

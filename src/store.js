@@ -129,6 +129,13 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(hashSession(token), userId, Date.now() + 86400000);
     return token;
   }
+  function sessionExpiresAt(token){if(!token||token.length>200)return null;return db.prepare('SELECT s.expires_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.blocked=0').get(hashSession(token),Date.now())?.expires_at||null;}
+  function renewSession(token){
+    if(!token||token.length>200)return null;
+    const at=Date.now(),expiresAt=at+86400000;
+    const changed=db.prepare('UPDATE sessions SET expires_at=? WHERE token_hash=? AND expires_at>? AND user_id IN (SELECT id FROM users WHERE blocked=0)').run(expiresAt,hashSession(token),at);
+    return changed.changes?expiresAt:null;
+  }
   function session(token) {
     if (!token || token.length > 200) return null;
     return publicUser(db.prepare('SELECT u.* FROM users u JOIN sessions s ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.blocked=0').get(hashSession(token), Date.now()));
@@ -269,7 +276,7 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
     });
   }
   const botStore=createBotStore({db,file,timeZone,audit,transaction,fail});
-  return { notificationSettings,saveNotificationSettings,...botStore, db, timeZone, userCount, addUser, updateUser, saveAvatar, getAvatar, login, createSession, session, importDirectory, catalog, catalogSummary, catalogPage, cacheCatalogRows, saveRequest, changeStatus, watchRequest,
+  return { notificationSettings,saveNotificationSettings,...botStore, db, timeZone, userCount, addUser, updateUser, saveAvatar, getAvatar, login, createSession, session, sessionExpiresAt, renewSession, importDirectory, catalog, catalogSummary, catalogPage, cacheCatalogRows, saveRequest, changeStatus, watchRequest,
     logout: token => db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hashSession(token || '')),
     users: () => db.prepare('SELECT id,username,name,role,created_at,blocked FROM users ORDER BY name').all().map(user=>({...user,avatar:avatarUrl(user.id)})),
     requests: (actor=null) => db.prepare("SELECT r.*,(SELECT label FROM catalog c WHERE c.kind='route' AND c.id=r.route_id) AS route_name,u.name AS created_by_name,EXISTS(SELECT 1 FROM request_watchers w WHERE w.request_id=r.id AND w.user_id=?) AS watching,(SELECT a.id FROM acceptance_attempts a WHERE a.plan_id=r.id AND a.state='success' ORDER BY a.updated_at DESC LIMIT 1) AS accepted_wb_id FROM requests r JOIN users u ON r.created_by=u.id ORDER BY r.service_date,r.service_time,r.priority,r.id").all(actor?.id||0).map(row=>({...row,status:row.found_wb_id&&row.status!=='archived'?'found':row.status})),

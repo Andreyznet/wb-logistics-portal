@@ -58,8 +58,10 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       if (req.method === 'POST' && req.headers.origin !== origin) fail(403,'Недопустимый источник запроса.');
       const browserUser=store.session(token),device=url.pathname.startsWith('/api/mobile/')?mobileDevice(store,req.headers.authorization):null;
       const user=device?.user||browserUser;
+      const sessionExpiresAt=browserUser?store.sessionExpiresAt(token):null;
+      if(sessionExpiresAt)headers['X-Session-Expires-At']=String(sessionExpiresAt);
       if (url.pathname === '/api/session' && req.method === 'GET') return json(200, {
-        serverVersion:'0.18.3',user,permissions:permissionsFor(store,user), setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
+        serverVersion:'0.18.3',user,sessionExpiresAt,permissions:permissionsFor(store,user), setupNeeded: store.userCount() === 0, setupTokenRequired: Boolean(setupToken) || trustProxy || !loopback(req.socket.remoteAddress),
         today: businessDate(store.timeZone), timeZone: store.timeZone,
         ...(demoMode ? { demoMode: true } : {}),
       });
@@ -86,6 +88,10 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       }
       if (url.pathname.startsWith('/api/')) {
         if (!user) fail(401,'Войдите в портал.');
+        if(url.pathname==='/api/session/activity'&&req.method==='POST'){
+          const expiresAt=store.renewSession(token);if(!expiresAt)fail(401,'Войдите в портал.');
+          return json(200,{sessionExpiresAt:expiresAt},{'Set-Cookie':cookie(token),'X-Session-Expires-At':String(expiresAt)});
+        }
         if(url.pathname==='/api/admin/devices'&&req.method==='GET')return json(200,{data:listDevices(store,user),users:store.users()});
         const blockMatch=/^\/api\/admin\/users\/(\d+)\/block$/.exec(url.pathname);
         if(blockMatch&&req.method==='POST')return json(200,blockAccount(store,Number(blockMatch[1]),(await body(req)).blocked,user));

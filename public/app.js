@@ -46,6 +46,7 @@ async function api(path,{method='GET',data,headers={},signal}={}){
   let result;try{result=await response.json();}catch{throw new Error('Сервер вернул повреждённый JSON. Перезапустите портал и повторите вход.');}
   if(!result||typeof result!=='object'||Array.isArray(result))throw new Error('Сервер вернул некорректные данные. Перезапустите портал.');
   if(!response.ok){if(response.status===401&&state.user){state.user=null;await boot();}throw new Error(result.error||'Не удалось выполнить запрос.');}
+  const expires=Number(response.headers.get('X-Session-Expires-At'));if(expires&&state.session)state.session.sessionExpiresAt=expires;
   return result;
 }
 function syncAndroidSession(){const native=window.MarshrutSession;if(!native)return;if(native.setTheme)native.setTheme(getTheme());if(state.user)native.signedIn(String(state.user.id));else native.signedOut();}
@@ -290,6 +291,32 @@ function renderHistoryPage(){
  bindHistoryControls();if(logs)renderMonitorTable(document.querySelector('#bot-logs'));else renderFoundTable(document.querySelector('#bot-events'));
  document.querySelector('#history-refresh').onclick=()=>void refreshBotStatus().catch(e=>toast(e.message,'error'));
 }
+// Only trusted interaction extends the browser session. Background polling never does.
+let sessionActivityPending=false,sessionActivityBusy=false,sessionActivitySent=0;
+function recordSessionActivity(event){
+ if(!event.isTrusted||!state.user||document.hidden)return;
+ sessionActivityPending=true;void flushSessionActivity();
+}
+async function flushSessionActivity(){
+ if(!state.user||document.hidden||!sessionActivityPending||sessionActivityBusy||Date.now()-sessionActivitySent<60000)return;
+ sessionActivityBusy=true;sessionActivityPending=false;
+ const userId=state.user.id;
+ try{const result=await api('/api/session/activity',{method:'POST',data:{}});if(state.user?.id===userId){state.session.sessionExpiresAt=result.sessionExpiresAt;sessionActivitySent=Date.now();document.querySelector('#session-expiry-warning')?.remove();}}
+ catch{sessionActivityPending=Boolean(state.user);}
+ finally{sessionActivityBusy=false;}
+}
+for(const name of ['pointerdown','keydown','wheel','touchstart','scroll'])document.addEventListener(name,recordSessionActivity,{passive:true,capture:true});
+setInterval(()=>{
+ void flushSessionActivity();
+ const expires=state.session?.sessionExpiresAt,remaining=expires-Date.now();
+ if(!state.user||!expires||remaining>15*60000){document.querySelector('#session-expiry-warning')?.remove();return;}
+ if(document.hidden||document.querySelector('#session-expiry-warning'))return;
+ const warning=document.createElement('div');warning.id='session-expiry-warning';warning.className='session-expiry-warning';warning.setAttribute('role','alert');
+ warning.innerHTML='<span>Сессия скоро завершится после 24 часов бездействия. Продлите её, чтобы получать алерты в браузере.</span><button type="button" class="primary">Продолжить работу</button>';
+ warning.querySelector('button').onclick=()=>{sessionActivitySent=0;sessionActivityPending=true;void flushSessionActivity();};document.body.append(warning);
+},15000);
+// End session activity
+
 boot();
 
 

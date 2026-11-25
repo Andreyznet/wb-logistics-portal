@@ -154,7 +154,7 @@ test('acceptance outcomes distinguish verified assignment from HTTP success and 
 
 test('successful assignment alerts only plan owner once and remains until their acknowledgement',()=>{
  const {store,admin}=init();try{addPlan(store,admin);const plan=store.requests()[0];const other=store.addUser({username:'other',name:'Other',password:'password-12345'},admin);const expected={planId:plan.id,driverId:plan.driver_id,vehicleId:plan.vehicle_id};const data={id:777,routeId:plan.route_id,httpStatus:200,expected,response:{data:{transport_request_id:777,route_id:plan.route_id,supplier_id:10,driver_id:plan.driver_id,vehicle_id:plan.vehicle_id}}};
- store.recordAcceptanceResult({...data,httpStatus:409,response:{error:{message:'Conflict'}}});assert.equal(store.userAlerts(admin).length,0);
+ store.recordAcceptanceResult({...data,httpStatus:409,response:{error:{message:'Conflict'}}});assert.equal(store.userAlerts(admin)[0].payload.acceptanceError,true);store.acknowledgeAlert(store.userAlerts(admin)[0].id,admin);
  store.recordAcceptanceResult(data);store.recordAcceptanceResult(data);assert.equal(store.userAlerts(admin).length,1);assert.equal(store.userAlerts(other).length,0);const alert=store.userAlerts(admin)[0];assert.equal(alert.payload.planId,plan.id);assert.throws(()=>store.acknowledgeAlert(alert.id,other));assert.equal(store.userAlerts(admin).length,1);store.acknowledgeAlert(alert.id,admin);assert.equal(store.userAlerts(admin).length,0);store.recordAcceptanceResult(data);assert.equal(store.userAlerts(admin).length,0);
  }finally{store.close();}
 });

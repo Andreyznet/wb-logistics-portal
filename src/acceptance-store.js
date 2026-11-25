@@ -17,7 +17,7 @@ export function createAcceptanceStore({db,transaction,botConfig,recordAcceptance
  function finish(id,expected,httpStatus,response,state,now,retryDelay=60000){
   // The durable pending intent continues to reserve the crew until result and plan updates are persisted.
   return transaction(()=>{
-  const result=recordAcceptanceResult({id,routeId:expected.routeId,httpStatus,response,expected,inTransaction:true});
+  const result=recordAcceptanceResult({id,routeId:expected.routeId,httpStatus,response,expected,resultState:state,inTransaction:true});
   const finalState=result.kind==='acceptance_success'?'success':httpStatus===429?'uncertain':state;
   db.prepare('UPDATE acceptance_attempts SET state=?,updated_at=?,retry_at=?,response=? WHERE id=?').run(finalState,now,now+retryDelay,JSON.stringify({httpStatus,response}),id);
    if(finalState==='success'){

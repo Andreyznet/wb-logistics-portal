@@ -13,10 +13,10 @@ final class AlertCard extends LinearLayout {
         boolean dark=Prefs.get(c).getString("theme","light").equals("dark");
         ink=Color.parseColor(dark?"#F1F5FA":"#10243A");muted=Color.parseColor(dark?"#97A7BC":"#65788D");line=Color.parseColor(dark?"#253044":"#DFE6EF");
         setOrientation(VERTICAL);setPadding(dp(24),dp(24),dp(24),dp(24));setBackground(shape(dark?0xff101724:Color.WHITE,20));
-        TextView mark=text("✓",28,0xff00a978,true);mark.setGravity(Gravity.CENTER);mark.setBackground(shape(dark?0xff12352f:0xffe7f7f0,16));addView(mark,new LayoutParams(dp(52),dp(52)));
-        TextView title=text(p.optBoolean("test")?"Тест уведомления":p.optBoolean("observed")?"Найдена заявка":"Заявка взята в работу",23,ink,true);
+        TextView mark=text(p.optBoolean("acceptanceError")?"!":"✓",28,p.optBoolean("acceptanceError")?0xffdc3545:0xff00a978,true);mark.setGravity(Gravity.CENTER);mark.setBackground(shape(dark?0xff12352f:0xffe7f7f0,16));addView(mark,new LayoutParams(dp(52),dp(52)));
+        TextView title=text(p.optBoolean("test")?"Тест уведомления":p.optBoolean("acceptanceError")?(p.optBoolean("uncertain")?"Результат принятия неизвестен":"Не удалось взять заявку"):p.optBoolean("observed")?"Найдена заявка":"Заявка взята в работу",23,ink,true);
         LayoutParams heading=new LayoutParams(-1,-2);heading.topMargin=dp(18);heading.bottomMargin=dp(8);addView(title,heading);
-        TextView subtitle=text(p.optBoolean("test")?"Проверка окна и звука. Запрос принятия в WB не отправлялся.":p.optBoolean("observed")?"Режим «Не брать в работу»: заявка найдена, принятие не отправлялось.":"Назначение экипажа подтверждено. Проверьте данные рейса.",13,muted,false);subtitle.setLineSpacing(dp(3),1);addView(subtitle);
+        TextView subtitle=text(p.optBoolean("test")?"Проверка окна и звука. Запрос принятия в WB не отправлялся.":p.optBoolean("acceptanceError")?p.optString("message")+(p.optBoolean("uncertain")?" Повторное принятие заблокировано до проверки результата.":" Проверьте заявку в WB."):p.optBoolean("observed")?"Режим «Не брать в работу»: заявка найдена, принятие не отправлялось.":"Назначение экипажа подтверждено. Проверьте данные рейса.",13,muted,false);subtitle.setLineSpacing(dp(3),1);addView(subtitle);
         int maxBody=Math.max(dp(80),getResources().getDisplayMetrics().heightPixels-dp(400));
         ScrollView body=new ScrollView(c){@Override protected void onMeasure(int w,int h){super.onMeasure(w,MeasureSpec.makeMeasureSpec(MeasureSpec.getMode(h)==MeasureSpec.UNSPECIFIED?maxBody:Math.min(maxBody,MeasureSpec.getSize(h)),MeasureSpec.AT_MOST));}};
         LinearLayout rows=new LinearLayout(c);rows.setOrientation(VERTICAL);body.addView(rows);

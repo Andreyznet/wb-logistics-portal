@@ -104,15 +104,20 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
     console.log(JSON.stringify({at,type:kind,...payload}));
   }
   function getBotSnapshot(id,actor){if(actor?.role!=='super_admin')fail(403,'Ответы WB доступны только администратору.');const row=db.prepare('SELECT payload FROM bot_snapshots WHERE id=?').get(id);if(!row)fail(404,'Снимок ответа не найден.');return JSON.parse(row.payload);}
-  function recordAcceptanceResult({id,routeId,httpStatus,response,expected,inTransaction=false}){
+  function recordAcceptanceResult({id,routeId,httpStatus,response,expected,resultState=null,inTransaction=false}){
     if(!Number.isSafeInteger(id)||id<=0)fail(400,'Некорректный ID заявки.');
     const card=response?.data;
     const success=httpStatus>=200&&httpStatus<300&&response?.success!==false&&card?.transport_request_id===id&&Number.isSafeInteger(card.supplier_id)&&card.supplier_id>0&&expected?.driverId===card.driver_id&&expected?.vehicleId===card.vehicle_id&&(expected.supplierId===undefined||expected.supplierId===card.supplier_id)&&(expected.routeId===undefined||expected.routeId===card.route_id);
     const message=success?'WB подтвердил назначение выбранного водителя и автомобиля.':String(response?.error?.message||response?.message||('Принятие не подтверждено. HTTP '+httpStatus)).slice(0,2000);
     const kind=success?'acceptance_success':'acceptance_error',payload={id,routeId,httpStatus,message},at=new Date().toISOString();
     const persist=()=>{db.prepare('INSERT INTO bot_acceptance_results VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,payload=excluded.payload,created_at=excluded.created_at').run(id,kind,JSON.stringify(payload),at);recordBotLog(kind,payload);
-      if(success){const observation=db.prepare('SELECT payload FROM bot_observations WHERE id=?').get(id);const candidate=observation?JSON.parse(observation.payload):{};const plan=db.prepare('SELECT * FROM requests WHERE id=?').get(expected?.planId||candidate.planId||0);
-        if(plan&&plan.driver_id===card.driver_id&&plan.vehicle_id===card.vehicle_id&&plan.route_id===(card.route_id??routeId)){const notice={id,planId:plan.id,routeId:plan.route_id,routeName:card.route_name||'',carDt:card.car_dt||candidate.carDt||null,driver:plan.driver_label,vehicle:plan.vehicle_label,trailer:plan.trailer_label||null,message};const recipients=db.prepare('SELECT id,name FROM users WHERE id=? OR id IN (SELECT user_id FROM request_watchers WHERE request_id=?)').all(plan.created_by,plan.id),author=recipients.find(u=>u.id===plan.created_by)?.name||'';for(const recipient of recipients)db.prepare('INSERT OR IGNORE INTO acceptance_alerts(user_id,request_id,payload,created_at) VALUES(?,?,?,?)').run(recipient.id,id,JSON.stringify({...notice,watching:recipient.id!==plan.created_by,author}),at);}
+      const observation=db.prepare('SELECT payload FROM bot_observations WHERE id=?').get(id);const candidate=observation?JSON.parse(observation.payload):{};
+      const plan=db.prepare('SELECT * FROM requests WHERE id=?').get(expected?.planId||candidate.planId||0);
+      if(plan&&(!success||plan.driver_id===card.driver_id&&plan.vehicle_id===card.vehicle_id&&plan.route_id===(card.route_id??routeId))){
+        const notice={id,planId:plan.id,routeId:plan.route_id,routeName:card?.route_name||candidate.routeName||'',carDt:card?.car_dt||candidate.carDt||null,driver:plan.driver_label,vehicle:plan.vehicle_label,trailer:plan.trailer_label||null,message,...(!success?{acceptanceError:true,uncertain:resultState==='uncertain'||httpStatus===429,httpStatus}:{} )};
+        const key=success?id:-parseInt(createHash('sha256').update('acceptance-error:'+plan.id+':'+id).digest('hex').slice(0,12),16);
+        const recipients=db.prepare('SELECT id,name FROM users WHERE id=? OR id IN (SELECT user_id FROM request_watchers WHERE request_id=?)').all(plan.created_by,plan.id),author=recipients.find(u=>u.id===plan.created_by)?.name||'';
+        for(const recipient of recipients)db.prepare('INSERT OR IGNORE INTO acceptance_alerts(user_id,request_id,payload,created_at) VALUES(?,?,?,?)').run(recipient.id,key,JSON.stringify({...notice,watching:recipient.id!==plan.created_by,author}),at);
       }
     };if(inTransaction)persist();else transaction(persist);return {kind,payload,created_at:at};
   }

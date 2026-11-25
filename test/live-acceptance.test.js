@@ -24,17 +24,17 @@ test('live success sends captured payload once, pauses plan and notifies owner; 
 });
 test('definitive conflict retries after cooldown without requiring a new detection, at most three PUTs',async()=>{
  const {store,admin}=setup();let puts=0,now=new Date();const worker=new BotWorker(store,{clock:()=>now,fetchImpl:async(url,options)=>{if(options.method==='PUT'){puts++;return Response.json({success:false,error:{message:'Выбранный маршрут нельзя взять в работу.'}},{status:409});}return Response.json({data:url.endsWith('TO_DELIVERY')?[row(100)]:row(100)});}});
- try{await worker.tick();assert.equal(puts,1);now=new Date(now.getTime()+4000);await worker.tick();assert.equal(puts,1);for(let i=0;i<4;i++){now=new Date(now.getTime()+61000);await worker.tick();}assert.equal(puts,3);assert.equal(store.userAlerts(admin).length,0);assert.equal(store.requests()[0].status,'waiting');assert.match(store.getBotStatus(admin).outcomes[0].payload.message,/маршрут/);}finally{store.close();}
+ try{await worker.tick();assert.equal(puts,1);now=new Date(now.getTime()+4000);await worker.tick();assert.equal(puts,1);for(let i=0;i<4;i++){now=new Date(now.getTime()+61000);await worker.tick();}assert.equal(puts,3);assert.equal(store.userAlerts(admin).length,1);assert.equal(store.userAlerts(admin)[0].payload.acceptanceError,true);assert.equal(store.requests()[0].status,'waiting');assert.match(store.getBotStatus(admin).outcomes[0].payload.message,/маршрут/);}finally{store.close();}
 });
 test('lost response is reconciled after restart without a second PUT',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'wb-live-')),file=join(dir,'portal.sqlite');let {store,admin}=setup(file);let puts=0;
  try{let worker=new BotWorker(store,{fetchImpl:async(url,options)=>{if(options.method==='PUT'){puts++;throw new Error('timeout');}return Response.json({data:url.endsWith('TO_DELIVERY')?[row(100)]:row(100)});}});await worker.tick();assert.equal(store.pendingAcceptances()[0].state,'uncertain');store.close();({store,admin}=setup(file));
- worker=new BotWorker(store,{fetchImpl:async(url,options)=>{assert.equal(options.method,'GET');return Response.json({data:url.endsWith('TO_DELIVERY')?[]:assigned(100)});}});await worker.tick();assert.equal(puts,1);assert.equal(store.pendingAcceptances().length,0);assert.equal(store.requests()[0].status,'paused');assert.equal(store.userAlerts(admin).length,1);
+ worker=new BotWorker(store,{fetchImpl:async(url,options)=>{assert.equal(options.method,'GET');return Response.json({data:url.endsWith('TO_DELIVERY')?[]:assigned(100)});}});await worker.tick();assert.equal(puts,1);assert.equal(store.pendingAcceptances().length,0);assert.equal(store.requests()[0].status,'paused');assert.equal(store.userAlerts(admin).length,2);assert.equal(store.userAlerts(admin)[0].payload.uncertain,true);
  }finally{store.close();await rm(dir,{recursive:true,force:true});}
 });
 test('wrong supplier cannot produce green success and uncertain PUT is not blindly repeated',async()=>{
  const {store,admin}=setup();let puts=0,now=new Date();const worker=new BotWorker(store,{clock:()=>now,fetchImpl:async(url,options)=>{if(options.method==='PUT'){puts++;return Response.json({data:{...assigned(100),supplier_id:999}});}return Response.json({data:url.endsWith('TO_DELIVERY')?[row(100)]:row(100)});}});
- try{await worker.tick();assert.equal(store.userAlerts(admin).length,0);assert.equal(store.getBotStatus(admin).outcomes[0].kind,'acceptance_error');now=new Date(now.getTime()+61000);await worker.tick();assert.equal(puts,1);}finally{store.close();}
+ try{await worker.tick();assert.equal(store.userAlerts(admin).length,1);assert.equal(store.userAlerts(admin)[0].payload.acceptanceError,true);assert.equal(store.getBotStatus(admin).outcomes[0].kind,'acceptance_error');now=new Date(now.getTime()+61000);await worker.tick();assert.equal(puts,1);}finally{store.close();}
 });
 test('401 from PUT stops the bot; trailers are never silently omitted',async()=>{
  const {store,admin}=setup();let puts=0;const worker=new BotWorker(store,{fetchImpl:async(url,options)=>{if(options.method==='PUT'){puts++;return Response.json({error:{message:'Unauthorized'}},{status:401});}return Response.json({data:url.endsWith('TO_DELIVERY')?[row(100)]:row(100)});}});
@@ -70,7 +70,7 @@ test('429 stays uncertain after cooldown even when GET reports unassigned, then 
  assert.equal(store.claimAcceptance(101,store.requests()[0],now.getTime()+200000),null,'unknown result reserves crew');
  const before=gets;now=new Date(now.getTime()+61000);await worker.tick();assert.equal(gets,before);
  now=new Date(now.getTime()+180000);await worker.tick();assert.equal(puts,1);assert.equal(store.getAcceptanceAttempt(100,admin).state,'uncertain');
- accepted=true;now=new Date(now.getTime()+61000);await worker.tick();assert.equal(puts,1);assert.equal(store.getAcceptanceAttempt(100,admin).state,'success');assert.equal(store.userAlerts(admin).length,1);
+ accepted=true;now=new Date(now.getTime()+61000);await worker.tick();assert.equal(puts,1);assert.equal(store.getAcceptanceAttempt(100,admin).state,'success');assert.equal(store.userAlerts(admin).length,2);
  }finally{store.close();}
 });
 
@@ -85,4 +85,18 @@ test('legacy failed 429 is migrated on restart and failed verification never unl
  const worker=new BotWorker(store,{clock:()=>now,fetchImpl:async(url,options)=>{if(options.method==='PUT')puts++;return Response.json({error:{message:'Unavailable'}},{status:503});}});
  await worker.tick();assert.equal(puts,0);assert.equal(store.getAcceptanceAttempt(100,admin).state,'uncertain');assert.equal(store.claimAcceptance(100,store.requests()[0],now.getTime()),null);
  }finally{store.close();await rm(dir,{recursive:true,force:true});}
+});
+
+
+test('acceptance failure alerts author and followers once; acknowledgement does not suppress later success',()=>{
+ const {store,admin}=setup();try{
+ const watcher=store.addUser({username:'watcher',name:'Watcher',role:'logist',password:'password-12345'},admin),other=store.addUser({username:'other',name:'Other',role:'logist',password:'password-12345'},admin),plan=store.requests()[0];store.watchRequest(plan.id,true,watcher);
+ const expected=store.claimAcceptance(100,plan,Date.now());
+ store.finishAcceptance(100,expected,429,{error:{message:'Результат неизвестен'}},'uncertain',Date.now());
+ for(const user of [admin,watcher]){const alerts=store.userAlerts(user);assert.equal(alerts.length,1);assert.equal(alerts[0].payload.acceptanceError,true);assert.equal(alerts[0].payload.uncertain,true);assert.equal(alerts[0].payload.httpStatus,429);assert.equal(alerts[0].payload.id,100);assert.equal(alerts[0].payload.planId,plan.id);}
+ assert.equal(store.userAlerts(other).length,0);assert.equal(store.userAlerts(watcher)[0].payload.watching,true);
+ const error=store.userAlerts(admin)[0];store.acknowledgeAlert(error.id,admin);
+ store.finishAcceptance(100,expected,503,{error:{message:'Unavailable'}},'uncertain',Date.now());assert.equal(store.userAlerts(admin).length,0);assert.equal(store.userAlerts(watcher).length,1);
+ store.finishAcceptance(100,expected,200,{data:assigned(100)},'success',Date.now());assert.equal(store.userAlerts(admin).length,1);assert.equal(Boolean(store.userAlerts(admin)[0].payload.acceptanceError),false);assert.equal(store.userAlerts(watcher).length,2);
+ }finally{store.close();}
 });

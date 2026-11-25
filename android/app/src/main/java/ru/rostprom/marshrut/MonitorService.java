@@ -91,11 +91,11 @@ public final class MonitorService extends Service {
                 JSONObject a=alerts.getJSONObject(i);long id=a.getLong("id");if(Prefs.acknowledged(this,id))continue;
                 queue.put(a);current.add(alertId(id));JSONObject p=a.getJSONObject("payload");
                 if(!shown.contains(alertId(id))){
-                    String title=p.optBoolean("test")?"Тест уведомления":p.optBoolean("observed")?"Найдена заявка":"Заявка взята в работу";
+                    String title=p.optBoolean("test")?"Тест уведомления":p.optBoolean("acceptanceError")?(p.optBoolean("uncertain")?"Результат принятия неизвестен":"Не удалось взять заявку"):p.optBoolean("observed")?"Найдена заявка":"Заявка взята в работу";
                     Intent open=new Intent(this,AlertActivity.class).putExtra("id",id);
                     PendingIntent tap=PendingIntent.getActivity(this,alertId(id),open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
                     PendingIntent ack=PendingIntent.getService(this,alertId(id),new Intent(this,MonitorService.class).setAction("ACK").putExtra("id",id),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-                    String text="Маршрут "+p.optString("routeId")+" · WB №"+p.optString("id")+"\n"+p.optString("driver")+"\n"+p.optString("vehicle");
+                    String text=(p.optBoolean("acceptanceError")?p.optString("message")+"\n":"")+"Маршрут "+p.optString("routeId")+" · WB №"+p.optString("id")+"\n"+p.optString("driver")+"\n"+p.optString("vehicle");
                     notifications.notify(alertId(id),new Notification.Builder(this,CH_ALERT).setSmallIcon(R.drawable.ic_notification).setContentTitle(title).setContentText(text).setStyle(new Notification.BigTextStyle().bigText(text)).setContentIntent(tap).setOngoing(true).setCategory(Notification.CATEGORY_EVENT).setVisibility(Notification.VISIBILITY_PRIVATE).addAction(new Notification.Action.Builder(null,"ОК",ack).build()).build());
                 }
             }

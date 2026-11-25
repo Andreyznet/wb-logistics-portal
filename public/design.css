@@ -2385,3 +2385,5 @@ dialog::backdrop {
 .monitor-start-row{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(80px,1fr);gap:8px}.monitor-start-row input{min-width:0;width:100%}
 
 .badge.found{color:var(--accent,#e65300)}.badge.found::before{content:"✓";width:auto;height:auto;background:none;border-radius:0}
+
+.acceptance-success-mark.is-error{color:#dc3545;background:rgba(220,53,69,.12)}

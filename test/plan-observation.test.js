@@ -43,3 +43,17 @@ test('legacy preview migration stops bot for review and keeps plans and tokens u
 test('stopped dashboard warns even with no ready plans, and retains an actual stop error',()=>{
  const {store,admin,logist}=setup();try{for(const user of [admin,logist])assert.ok(dashboard(store,user).alerts.some(a=>a.title==='Бот остановлен'));store.setBotRuntime({state:'auth_error',error:'Token rejected'});assert.ok(dashboard(store,admin).alerts.some(a=>a.tone==='error'&&a.text==='Token rejected'));}finally{store.close();}
 });
+
+test('observation alert survives a later card failure in the same poll',async()=>{
+ const {store,admin}=setup();try{
+ store.saveRequest(input({observeOnly:true}),admin);enable(store,admin,0);let puts=0;
+ const worker=new BotWorker(store,{fetchImpl:async(url,options)=>{
+  if(options.method==='PUT')puts++;
+  if(url.endsWith('TO_DELIVERY'))return Response.json({data:[card,{...card,transport_request_id:101}]});
+  if(url.endsWith('/101'))return Response.json({message:'Unavailable'},{status:503});
+  return Response.json({data:card});
+ }});
+ await worker.tick();assert.equal(puts,0);assert.equal(store.userAlerts(admin).length,1);assert.equal(store.userAlerts(admin)[0].payload.id,100);
+ assert.ok(store.botHistoryPage('logs',{q:'poll_failed'},admin).total);
+ }finally{store.close();}
+});

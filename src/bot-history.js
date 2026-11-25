@@ -1,5 +1,6 @@
 // Diagnostic retention is independent of durable acceptance claims and plan state.
 export function createBotHistory(db,fail){
+ const parsePayload=value=>{try{const parsed=JSON.parse(value);if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed))return parsed;}catch{}return {message:'Повреждённая запись журнала',rawPayload:value};};
  if(!db.prepare('PRAGMA table_info(bot_snapshots)').all().some(c=>c.name==='created_at')){
   db.exec('ALTER TABLE bot_snapshots ADD COLUMN created_at TEXT');
   db.prepare("UPDATE bot_snapshots SET created_at=COALESCE(json_extract(payload,'$.receivedAt'),?)").run(new Date().toISOString());
@@ -31,16 +32,18 @@ export function createBotHistory(db,fail){
    clauses.push('e.created_at'+op+'?');args.push(new Date(input[key]).toISOString());
   }
   if(input.from&&input.to&&Date.parse(input.from)>Date.parse(input.to))fail(400,'Начало периода позже окончания.');
+  const safePayload="CASE WHEN json_valid(e.payload) THEN e.payload ELSE '{}' END";
   const fields=kind==='logs'?{id:'e.id',time:'e.created_at',event:'e.kind',routes:"COALESCE(json_extract(e.payload,'$.routes'),json_extract(e.payload,'$.routeId'))",http:"json_extract(e.payload,'$.httpStatus')",duration:"json_extract(e.payload,'$.durationMs')",result:'e.payload',requestId:"json_extract(e.payload,'$.id')"}:{id:'e.id',requestId:"json_extract(e.payload,'$.id')",routeId:"json_extract(e.payload,'$.routeId')",carTime:"julianday(json_extract(e.payload,'$.carDt'))",foundTime:'e.created_at',event:'e.kind',outcomeText:'r.payload'};
+  for(const key of Object.keys(fields))fields[key]=fields[key].replaceAll('json_extract(e.payload,','json_extract('+safePayload+',');
   const contains=(expr,value)=>{clauses.push('CAST('+expr+" AS TEXT) LIKE ? ESCAPE '!' ");args.push('%'+String(value).replaceAll('!','!!').replaceAll('%','!%').replaceAll('_','!_')+'%');};
   if(input.q){if(typeof input.q!=='string'||input.q.length>200)fail(400,'Слишком длинный поиск.');contains("e.kind||' '||e.payload",input.q);}
   let filters=[],sorters=[];try{filters=JSON.parse(input.filters||'[]');sorters=JSON.parse(input.sorters||'[]');}catch{fail(400,'Некорректные фильтры.');}
   if(!Array.isArray(filters)||filters.length>10||!Array.isArray(sorters)||sorters.length>5)fail(400,'Некорректные фильтры.');
   for(const f of filters){if(!f||!Object.hasOwn(fields,f.field)||typeof f.value!=='string'||f.value.length>200)fail(400,'Некорректный фильтр.');contains(fields[f.field],f.value);}
   const order=sorters.map(s=>{if(!s||!Object.hasOwn(fields,s.field)||!['asc','desc'].includes(s.dir))fail(400,'Некорректная сортировка.');return fields[s.field]+' '+s.dir;});order.push('e.id DESC');
-  const join=kind==='events'?" LEFT JOIN bot_acceptance_results r ON r.id=json_extract(e.payload,'$.id')":'',where=clauses.length?' WHERE '+clauses.join(' AND '):'';
+  const join=kind==='events'?" LEFT JOIN bot_acceptance_results r ON r.id=json_extract(CASE WHEN json_valid(e.payload) THEN e.payload ELSE '{}' END,'$.id')":'',where=clauses.length?' WHERE '+clauses.join(' AND '):'';
   const total=db.prepare('SELECT count(*) AS n FROM '+table+' e'+join+where).get(...args).n;
-  const rows=db.prepare('SELECT e.*'+(kind==='events'?',r.kind AS outcome_kind,r.payload AS outcome_payload':'')+' FROM '+table+' e'+join+where+' ORDER BY '+order.join(',')+' LIMIT ? OFFSET ?').all(...args,size,(page-1)*size).map(row=>({...row,payload:JSON.parse(row.payload),...(row.outcome_payload?{outcome:{kind:row.outcome_kind,payload:JSON.parse(row.outcome_payload)}}:{})}));
+  const rows=db.prepare('SELECT e.*'+(kind==='events'?',r.kind AS outcome_kind,r.payload AS outcome_payload':'')+' FROM '+table+' e'+join+where+' ORDER BY '+order.join(',')+' LIMIT ? OFFSET ?').all(...args,size,(page-1)*size).map(row=>({...row,payload:parsePayload(row.payload),...(row.outcome_payload?{outcome:{kind:row.outcome_kind,payload:parsePayload(row.outcome_payload)}}:{})}));
   const names=new Map(),routeName=id=>{if(!names.has(id))names.set(id,db.prepare("SELECT label FROM catalog WHERE kind='route' AND id=?").get(id)?.label||null);return names.get(id);};
   for(const row of rows){const ids=[row.payload.routeId,...(Array.isArray(row.payload.routes)?row.payload.routes:[])].filter(id=>Number.isSafeInteger(Number(id))&&Number(id)>0);row.payload.routeNames={...row.payload.routeNames,...Object.fromEntries(ids.map(id=>[id,routeName(Number(id))]).filter(([,name])=>name))};if(row.payload.routeId)row.payload.routeName=routeName(Number(row.payload.routeId))||row.payload.routeName||null;}
   const data=actor.role==='super_admin'?rows:rows.map(row=>({id:row.id,kind:row.kind,created_at:row.created_at,payload:{id:row.payload.id,routeId:row.payload.routeId,routeName:row.payload.routeName,routeNames:row.payload.routeNames,carDt:row.payload.carDt},...(row.outcome?{outcome:{kind:row.outcome.kind,payload:{message:row.outcome.payload.message}}}:{})}));

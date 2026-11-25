@@ -61,3 +61,14 @@ test('history controls convert portal time explicitly and map remote rows and fi
  assert.match(vm.runInContext("historyControls('logs')",context),/datetime-local/);
  const vendorParams=vm.runInContext("historyParams('logs',{page:2,filter:[{field:'http',value:'403'}],sort:[{field:'time',dir:'asc'}]})",context);assert.equal(JSON.parse(vendorParams.get('sorters'))[0].field,'time');assert.equal(JSON.parse(vendorParams.get('filters'))[0].value,'403');
 });
+
+test('history export keeps damaged legacy payloads and reaches later pages',()=>{
+ const {store,admin}=setup();try{
+ const at=iso(0);store.db.exec('BEGIN');for(let id=1;id<=4200;id++)log(store,id,at);store.db.exec('COMMIT');
+ store.db.prepare('UPDATE bot_logs SET payload=? WHERE id=150').run('{broken');
+ const result=store.botHistoryPage('logs',{page:41,size:100},admin);
+ assert.equal(result.data.length,100);assert.equal(result.data.find(r=>r.id===150).payload.rawPayload,'{broken');
+ const sorted=store.botHistoryPage('logs',{sorters:JSON.stringify([{field:'http',dir:'asc'}])},admin);assert.equal(sorted.total,4200);
+ assert.equal(store.botHistoryPage('logs',{filters:JSON.stringify([{field:'http',value:'200'}])},admin).total,4199);
+ }finally{store.close();}
+});

@@ -77,7 +77,11 @@ export class BotWorker {
         if(this.deniedCards.has(row.transport_request_id)){denied++;continue;}
         let result;try{result=await this.get(`${API}/${row.transport_request_id}`,config.token,controller.signal);}catch(error){if(!error.cardDenied)throw error;denied++;if(this.deniedCards.size>=1000)this.deniedCards.delete(this.deniedCards.keys().next().value);this.deniedCards.set(row.transport_request_id,this.clock().getTime()+300000);this.store.recordBotLog('card_access_denied',{id:row.transport_request_id,routeId:row.route_id,httpStatus:403,message:error.message+' Карточка пропущена; повторная проверка через 5 минут. Бот продолжает работу.'});continue;}const card=result?.data;
         if(!card||card.transport_request_id!==row.transport_request_id||card.route_id!==row.route_id||!Object.hasOwn(card,'supplier_id')||typeof card.request_status!=='string'||typeof card.is_closed!=='boolean'||!card.car_dt||!Number.isFinite(Date.parse(card.car_dt)))throw new PollError('Неожиданная структура карточки WB.');
-        if(matches(card)&&card.request_status==='created'&&card.is_closed===false&&card.supplier_id===null)candidates.push({id:card.transport_request_id,routeId:card.route_id,carDt:card.car_dt,routeName:card.route_name||'',cubature:card.cubature_value??null,pricePerKm:card.price_per_km??null,distanceKm:card.distance_km??null});
+        if(matches(card)&&card.request_status==='created'&&card.is_closed===false&&card.supplier_id===null){
+          const candidate={id:card.transport_request_id,routeId:card.route_id,carDt:card.car_dt,routeName:card.route_name||'',cubature:card.cubature_value??null,pricePerKm:card.price_per_km??null,distanceKm:card.distance_km??null};
+          candidates.push(candidate);
+          if(!controller.signal.aborted&&generation===this.generation)this.store.notifyObservedCandidate(candidate,today,this.clock());
+        }
       }
       if(controller.signal.aborted||generation!==this.generation)return;
       for(const candidate of candidates){
@@ -88,7 +92,6 @@ export class BotWorker {
         candidate.previewNote=candidate.curl?(!candidate.observeOnly?'Команда сформирована; результат реального запроса — в журнале принятия.':'Только текст команды. Запрос принятия не отправлен.'):'Команда не сформирована: требуется подтвердить поле прицепа в API WB.';
       }
       const events=this.store.recordBotCandidates(candidates,{source:`${API}?filter=TO_DELIVERY`,method:'GET',receivedAt:listReceivedAt,candidateIds:candidates.map(c=>c.id),response:payload});
-      for(const candidate of candidates)this.store.notifyObservedCandidate(candidate,today,this.clock());
       for(const candidate of candidates){if(controller.signal.aborted||generation!==this.generation)break;await this.live.take(candidate,config.token,controller.signal,today);}
       this.store.recordBotLog('poll_completed',{routes:[...new Set(plans.map(p=>p.route_id))],total:payload.data.length,targetRecords:targets.length,candidates:candidates.length,newEvents:events,deniedCards:denied});this.failures=0;this.nextAt=this.clock().getTime()+config.intervalSeconds*1000;
       this.store.setBotRuntime({state:'waiting',lastSuccessAt:this.clock().toISOString(),nextPollAt:new Date(this.nextAt).toISOString(),total:payload.data.length,targetRecords:targets.length,candidates:candidates.length,newEvents:events,monitoredRoutes:new Set(plans.map(p=>p.route_id)).size,deniedCards:denied,warning:denied?'Нет доступа к карточкам: '+denied+'. Они пропущены; мониторинг остальных продолжается.':null,error:null});

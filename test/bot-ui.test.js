@@ -52,3 +52,13 @@ test('accepted date and time render as wrapping parts in status cell using porta
  assert.match(markup,/<span>26.11.2026<\/span><span>05:10:22<\/span>/);assert.match(markup,/datetime="2026-11-26T00:10:22.000Z"/);
  assert.equal(vm.runInContext('acceptedTimeMarkup(null)',context),'');assert.equal(vm.runInContext("acceptedTimeMarkup('bad')",context),'');
 });
+
+
+test('manager saves bot settings without requesting administrator-only activity history',async()=>{
+ const source=await readFile(new URL('../public/app.js',import.meta.url),'utf8');const start=source.indexOf("document.querySelector('#bot-form').onsubmit=async event=>{");const end=source.indexOf('\n  };',start)+6;
+ const button={disabled:false},error={textContent:''},fields={'#bot-supplier':{value:'10095401'},'#bot-rate':{value:'12'},'#schedule-start':{value:'08:00'},'#schedule-end':{value:'20:00'},'#bot-token':{value:'new-test-token'}};
+ const form={querySelector:s=>s==='[type=submit]'?button:error,querySelectorAll:()=>[]};let renders=0;const calls=[],messages=[];
+ const context=vm.createContext({state:{user:{role:'admin'},bot:{settings:{revision:1,enabled:false}}},botMutating:false,botEpoch:0,document:{querySelector:s=>s==='#bot-form'?form:fields[s]},paintHeaderBot:()=>{},applyBotSnapshot:()=>{},renderBotSettings:()=>renders++,toast:v=>messages.push(v),api:async(path,options)=>{calls.push(path);assert.equal(path,'/api/bot/settings','saving must never access the restricted history endpoint');assert.equal(options.data.requestsPerMinute,12);return {settings:{enabled:false,revision:2}};}});
+ vm.runInContext(source.slice(start,end),context);await form.onsubmit({preventDefault(){},currentTarget:form});
+ assert.deepEqual(calls,['/api/bot/settings']);assert.deepEqual(messages,['Настройки бота сохранены']);assert.equal(error.textContent,'');assert.equal(renders,1);assert.equal(fields['#bot-token'].value,'');assert.equal(button.disabled,false);
+});

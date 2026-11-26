@@ -285,7 +285,7 @@ function renderBotSettings(){
   document.querySelector('#bot-form').onsubmit=async event=>{
     event.preventDefault();const form=event.currentTarget,button=form.querySelector('[type=submit]');button.disabled=true;botMutating=true;botEpoch++;paintHeaderBot();form.querySelector('.form-error').textContent='';
     try{const data={revision:state.bot.settings.revision,enabled:state.bot.settings.enabled,supplierId:Number(document.querySelector('#bot-supplier').value)||0,requestsPerMinute:Number(document.querySelector('#bot-rate').value),intervalSeconds:60/Number(document.querySelector('#bot-rate').value),scheduleEnabled:false,days:[...form.querySelectorAll('[name=bot-day]:checked')].map(e=>Number(e.value)),startTime:document.querySelector('#schedule-start').value,endTime:document.querySelector('#schedule-end').value,token:document.querySelector('#bot-token').value};
-      applyBotSnapshot(await api('/api/bot/settings',{method:'POST',data}));document.querySelector('#bot-token').value='';state.activity=(await api('/api/activity')).data;renderBotSettings();toast('Настройки бота сохранены');
+      applyBotSnapshot(await api('/api/bot/settings',{method:'POST',data}));document.querySelector('#bot-token').value='';renderBotSettings();toast('Настройки бота сохранены');
     }catch(error){form.querySelector('.form-error').textContent=error.message;}finally{button.disabled=false;botMutating=false;paintHeaderBot();}
   };
 }

@@ -12,7 +12,7 @@ public final class AlertActivity extends Activity {
         try{
             JSONArray queue=new JSONArray(Prefs.get(this).getString("queue","[]"));JSONObject alert=null;
             for(int i=0;i<queue.length();i++)if(queue.getJSONObject(i).getLong("id")==id)alert=queue.getJSONObject(i);
-            if(alert==null||Prefs.acknowledged(this,id)){finish();return;}JSONObject p=alert.getJSONObject("payload");
+            if(alert==null||Prefs.acknowledged(this,id)){finish();return;}JSONObject p=alert.getJSONObject("payload");if(!p.has("acceptedAt")&&!p.optBoolean("test")&&!p.optBoolean("observed")&&!p.optBoolean("acceptanceError"))p.put("acceptedAt",alert.optString("created_at"));
             setContentView(new AlertCard(this,p,()->{if(!Prefs.acknowledge(this,id)){Toast.makeText(this,"Не удалось сохранить подтверждение. Повторите ОК.",Toast.LENGTH_LONG).show();return;}ReceiptJob.schedule(this);try{startService(new Intent(this,MonitorService.class).setAction("ACK").putExtra("id",id));}catch(Exception ignored){}finish();}));
             getWindow().setBackgroundDrawableResource(android.R.color.transparent);
             android.view.WindowManager.LayoutParams attrs=getWindow().getAttributes();attrs.dimAmount=0.65f;getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND);getWindow().setAttributes(attrs);

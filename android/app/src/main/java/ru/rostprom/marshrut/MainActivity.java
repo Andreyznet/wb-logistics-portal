@@ -25,7 +25,7 @@ public final class MainActivity extends Activity {
         layout.setOnApplyWindowInsetsListener((v,insets)->{v.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());return insets.consumeSystemWindowInsets();});
         connection=new TextView(this); // Diagnostics live in profile settings, not a second toolbar.
         web=new WebView(this);layout.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(layout);
-        WebSettings settings=web.getSettings();settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);settings.setUserAgentString(settings.getUserAgentString()+" MarshrutAndroid/1.1.3");settings.setMediaPlaybackRequiresUserGesture(true);
+        WebSettings settings=web.getSettings();settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);settings.setUserAgentString(settings.getUserAgentString()+" MarshrutAndroid/1.1.4");settings.setMediaPlaybackRequiresUserGesture(true);
         CookieManager.getInstance().setAcceptCookie(true);CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);
         web.addJavascriptInterface(new Downloads(),"MarshrutFiles");web.addJavascriptInterface(new Session(),"MarshrutSession");
         web.setWebViewClient(new WebViewClient(){
@@ -59,7 +59,7 @@ public final class MainActivity extends Activity {
         stopService(new Intent(this,MonitorService.class));DeviceAuth.clear();Prefs.clearAccount(this);
         connecting=true;connectingUser=userId;connection.setText("Подключаем уведомления телефона…");
         String installation=Prefs.get(this).getString("installation","");if(installation.isEmpty()){installation=UUID.randomUUID().toString();Prefs.get(this).edit().putString("installation",installation).apply();}
-        String js="fetch('/portal-api/mobile/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({installationId:"+JSONObject.quote(installation)+",deviceName:"+JSONObject.quote(Build.MANUFACTURER+" "+Build.MODEL)+",appVersion:\"1.1.3\"})}).then(async r=>{if(!r.ok)throw Error('HTTP '+r.status);return r.json();}).then(d=>MarshrutSession.connected(JSON.stringify(d))).catch(e=>MarshrutSession.failed(String(e.message)))";
+        String js="fetch('/portal-api/mobile/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({installationId:"+JSONObject.quote(installation)+",deviceName:"+JSONObject.quote(Build.MANUFACTURER+" "+Build.MODEL)+",appVersion:\"1.1.4\"})}).then(async r=>{if(!r.ok)throw Error('HTTP '+r.status);return r.json();}).then(d=>MarshrutSession.connected(JSON.stringify(d))).catch(e=>MarshrutSession.failed(String(e.message)))";
         web.evaluateJavascript(js,null);
     }
     public final class Session {
@@ -106,7 +106,7 @@ public final class MainActivity extends Activity {
             if(which==2){if(!batteryExempt())requestBatteryExemption();else new AlertDialog.Builder(this).setTitle("Фон разрешён").setMessage("Исключение из оптимизации батареи включено. На Xiaomi, Honor и других устройствах дополнительно проверьте автозапуск и разрешение фоновой сети в настройках приложения.").setPositiveButton("Настройки телефона",(d2,w)->startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())))).setNegativeButton("Закрыть",null).show();}
             if(which==4)startActivityForResult(new Intent(this,SetupActivity.class),50);
             if(which==5){refreshNativeState();connection.append("\n"+(Prefs.enabled(this)?Prefs.get(this).getString("pushStatus","FCM: регистрация ожидается"):"Доставка отключена пользователем. Регистрация FCM сохранена."));}if(which==5)new AlertDialog.Builder(this).setTitle("Подключение").setMessage(connection.getText()).setPositiveButton("ОК",null).show();
-            if(which==3)new AlertDialog.Builder(this).setTitle("Маршрут 1.1.3").setMessage("Все функции портала + системные уведомления Android. Сервер: open-key.ru. События доставляются через Firebase FCM. Пока отправка FCM не настроена на сервере, используется резервная фоновая связь. При отсутствии сети доставка задерживается. После принудительной остановки или перезагрузки откройте приложение снова. Изменить личный сигнал можно в профиле портала.").setPositiveButton("ОК",null).show();
+            if(which==3)new AlertDialog.Builder(this).setTitle("Маршрут 1.1.4").setMessage("Все функции портала + системные уведомления Android. Сервер: open-key.ru. События доставляются через Firebase FCM. Пока отправка FCM не настроена на сервере, используется резервная фоновая связь. При отсутствии сети доставка задерживается. После принудительной остановки или перезагрузки откройте приложение снова. Изменить личный сигнал можно в профиле портала.").setPositiveButton("ОК",null).show();
         }).show();
     }
     public final class Downloads {

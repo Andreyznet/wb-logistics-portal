@@ -1,4 +1,3 @@
-import {createResponseArchive} from './response-archive.js';
 import {monitoringDue} from './monitoring-time.js';
 import { randomBytes, createCipheriv, createDecipheriv, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -23,8 +22,7 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
   }
   db.exec(`CREATE TABLE IF NOT EXISTS bot_observations(id INTEGER PRIMARY KEY,fingerprint TEXT NOT NULL,active INTEGER NOT NULL,payload TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS acceptance_alerts(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),request_id INTEGER NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL,ack_at TEXT,UNIQUE(user_id,request_id)); CREATE TABLE IF NOT EXISTS bot_acceptance_results(id INTEGER PRIMARY KEY,kind TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS bot_snapshots(id INTEGER PRIMARY KEY,payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS bot_logs(id INTEGER PRIMARY KEY,kind TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS bot_events(id INTEGER PRIMARY KEY,kind TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);`);
-  const responseArchive=createResponseArchive({db,transaction,fail});
-  const history=createBotHistory(db,fail,responseArchive.cleanupWbResponses);
+  const history=createBotHistory(db,fail);
   const read=(name,fallback)=>{const r=db.prepare('SELECT value FROM settings WHERE key=?').get(name);return r?JSON.parse(r.value):fallback;};
   const write=(name,value)=>db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(name,JSON.stringify(value));
   if(!read('per_plan_acceptance_v1',false))transaction(()=>{
@@ -155,6 +153,6 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
     return transaction(()=>{const event=db.prepare('SELECT payload FROM bot_events WHERE id=?').get(id);if(!event)fail(404,'Запись не найдена.');const payload=JSON.parse(event.payload);db.prepare('DELETE FROM bot_events WHERE id=?').run(id);db.prepare('UPDATE bot_observations SET active=0 WHERE id=?').run(payload.id);audit(actor.id,'bot_event_deleted',null,'Запись '+id+', заявка WB '+payload.id+'; история попыток сохранена.');return {ok:true,requestId:payload.id};});
   }
   const acceptanceStore=createAcceptanceStore({db,transaction,botConfig,recordAcceptanceResult,audit,fail});
-  return {...responseArchive,recordApiHealth,notifyObservedCandidate,...history,...acceptanceStore,deleteBotEvent,createTestAlert,userAlerts,acknowledgeAlert,recordAcceptanceResult,getBotSnapshot,recordBotLog,getBotSettings,saveBotSettings,botConfig,stopBot,setBotRuntime,getBotStatus,recordBotCandidates};
+  return {recordApiHealth,notifyObservedCandidate,...history,...acceptanceStore,deleteBotEvent,createTestAlert,userAlerts,acknowledgeAlert,recordAcceptanceResult,getBotSnapshot,recordBotLog,getBotSettings,saveBotSettings,botConfig,stopBot,setBotRuntime,getBotStatus,recordBotCandidates};
 }
 

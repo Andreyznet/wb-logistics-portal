@@ -29,8 +29,8 @@ export class BotWorker {
     catch(error){this.store.recordBotLog(signal.aborted?'request_cancelled':'request_failed',{requestId,method:'GET',url,durationMs:Date.now()-started,message:error instanceof PollError?error.message:'Чтение запроса прервано.'});throw error;}
   }
   async read(url,token,signal,requestId){
-    let response;try{response=await this.fetchImpl(url,{method:'GET',archiveRequestId:requestId,redirect:'manual',signal:AbortSignal.any([signal,AbortSignal.timeout(20000)]),headers:{Accept:'application/json',Authorization:`Bearer ${token}`}});}catch(error){if(signal.aborted)throw error;throw new PollError('Сетевая ошибка или тайм-аут WB.');}
-    this.store.recordBotLog('response_received',{requestId,method:'GET',url,httpStatus:response.status,responseId:response.archiveId||null});
+    let response;try{response=await this.fetchImpl(url,{method:'GET',redirect:'manual',signal:AbortSignal.any([signal,AbortSignal.timeout(20000)]),headers:{Accept:'application/json',Authorization:`Bearer ${token}`}});}catch(error){if(signal.aborted)throw error;throw new PollError('Сетевая ошибка или тайм-аут WB.');}
+    this.store.recordBotLog('response_received',{requestId,method:'GET',url,httpStatus:response.status});
     if([401,403].includes(response.status)){
       let detail='';try{const body=await response.json();detail=String(body?.error?.message||body?.message||'').replaceAll(token,'[скрыто]').replace(/eyJ[A-Za-z0-9_.-]+/g,'[скрыто]').slice(0,500);}catch{}
       const cardId=/\/transport-requests\/(\d+)$/.exec(new URL(url).pathname)?.[1];

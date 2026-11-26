@@ -1,5 +1,5 @@
 // Diagnostic retention is independent of durable acceptance claims and plan state.
-export function createBotHistory(db,fail,cleanupResponses=()=>{}){
+export function createBotHistory(db,fail){
  const parsePayload=value=>{try{const parsed=JSON.parse(value);if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed))return parsed;}catch{}return {message:'Повреждённая запись журнала',rawPayload:value};};
  if(!db.prepare('PRAGMA table_info(bot_snapshots)').all().some(c=>c.name==='created_at')){
   db.exec('ALTER TABLE bot_snapshots ADD COLUMN created_at TEXT');
@@ -12,7 +12,6 @@ export function createBotHistory(db,fail,cleanupResponses=()=>{}){
  let lastCleanup=0;
  function cleanup(now=Date.now(),force=false){
   if(!force&&now-lastCleanup<3600000)return;lastCleanup=now;
-  cleanupResponses(now);
   const cutoff=days=>new Date(now-days*86400000).toISOString();
   db.prepare('DELETE FROM bot_logs WHERE created_at<?').run(cutoff(30));
   for(const table of ['bot_events','bot_snapshots','bot_acceptance_results'])db.prepare('DELETE FROM '+table+' WHERE created_at<?').run(cutoff(90));

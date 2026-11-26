@@ -44,3 +44,11 @@ test('plan wording distinguishes monitoring, future dates, stopped bot and proce
  const source=await readFile(new URL('../public/app.js',import.meta.url),'utf8');const block=source.slice(source.indexOf('function planStatusLabel('),source.indexOf('const dateLabel='));const context=vm.createContext({state:{}});vm.runInContext(block,context);
  for(const [plan,on,label]of [[{status:'waiting',service_date:'2026-11-21'},true,'Мониторинг'],[{status:'waiting',service_date:'2026-11-21'},false,'Ожидает запуска'],[{status:'waiting',service_date:'2026-11-22'},true,'Ожидает даты'],[{status:'paused'},true,'На паузе'],[{status:'paused',accepted_wb_id:1918620},false,'Обработана'],[{status:'archived',accepted_wb_id:1918620},false,'В архиве']]){context.plan=plan;context.on=on;assert.equal(vm.runInContext("planStatusLabel(plan,on,'2026-11-21')",context),label);}
 });
+
+
+test('accepted date and time render as wrapping parts in status cell using portal timezone',async()=>{
+ const source=await readFile(new URL('../public/app.js',import.meta.url),'utf8');const block=source.slice(source.indexOf('function acceptedTimeMarkup('),source.indexOf('function requestRow('));const context=vm.createContext({state:{session:{timeZone:'Asia/Yekaterinburg'}}});vm.runInContext(block,context);
+ const markup=vm.runInContext("acceptedTimeMarkup(Date.parse('2026-11-26T00:10:22Z'))",context);
+ assert.match(markup,/<span>26.11.2026<\/span><span>05:10:22<\/span>/);assert.match(markup,/datetime="2026-11-26T00:10:22.000Z"/);
+ assert.equal(vm.runInContext('acceptedTimeMarkup(null)',context),'');assert.equal(vm.runInContext("acceptedTimeMarkup('bad')",context),'');
+});

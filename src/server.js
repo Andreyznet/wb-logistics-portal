@@ -143,6 +143,15 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         }
         if(url.pathname==='/api/knowledge'&&req.method==='GET')return json(200,{data:knowledgeFor(user.role)});
         if(url.pathname==='/api/bot/test-recipients'&&req.method==='GET')return json(200,{data:store.users().filter(u=>!u.blocked).map(({id,name,role})=>({id,name,role}))});
+        if(url.pathname==='/api/bot/responses/export'&&req.method==='GET'){
+          check('logs');const iterate=store.wbResponseExport(Object.fromEntries(url.searchParams),diagnosticActor(user));
+          res.writeHead(200,{...headers,'Content-Type':'application/json; charset=utf-8','Content-Disposition':'attachment; filename="wb-responses.json"'});
+          res.write('{"responses":[');let first=true;
+          for(const row of iterate()){if(res.destroyed)return;const chunk=(first?'':',')+JSON.stringify(row);first=false;if(!res.write(chunk))await new Promise(resolve=>{const done=()=>{res.removeListener('drain',done);res.removeListener('close',done);resolve();};res.once('drain',done);res.once('close',done);});}
+          return res.end(']}');
+        }
+        const responseMatch=/^\/api\/bot\/responses\/(\d+)$/.exec(url.pathname);
+        if(responseMatch&&req.method==='GET'){check('logs');return json(200,store.getWbResponse(Number(responseMatch[1]),diagnosticActor(user)));}
         if(url.pathname==='/api/bot/test-alert'&&req.method==='POST'){const input=await body(req);return json(201,store.createTestAlert(input.planId??null,managerActor(user),input.userId??null));}
         if(url.pathname==='/api/me/alerts'&&req.method==='GET')return json(200,{data:store.userAlerts(user)});
         const alertMatch=/^\/api\/me\/alerts\/(\d+)\/ack$/.exec(url.pathname);

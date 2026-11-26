@@ -13,6 +13,12 @@ export function monitoredFetch(store, fetchImpl = fetch) {
       if (!options.signal?.aborted) report(0, 'API недоступен: ошибка сети или тайм-аут.');
       throw error;
     }
+    if(store.recordWbResponse){
+      const token=(new Headers(options.headers||{}).get('authorization')||'').replace(/^Bearer\s+/i,'');
+      let text='',bodyError='';try{text=await response.clone().text();}catch{bodyError='Не удалось полностью прочитать тело ответа.';}
+      try{response.archiveId=store.recordWbResponse({requestId:options.archiveRequestId||crypto.randomUUID(),at:new Date().toISOString(),method,url:String(url),httpStatus:response.status,contentType:response.headers.get('content-type')||'',text,bodyError},token);store.recordBotLog?.('wb_response_saved',{responseId:response.archiveId,method,url:String(url),httpStatus:response.status,message:'Ответ WB сохранён до фильтрации.'});}
+      catch{try{store.recordBotLog?.('response_archive_failed',{method,httpStatus:response.status,message:'Не удалось сохранить ответ WB. Проверьте доступность и свободное место базы.'});}catch{console.error('WB response archive unavailable.');}}
+    }
     report(response.status, response.status === 200 ? 'Работа API восстановлена: HTTP 200.' : `Неожиданный ответ API: HTTP ${response.status}; ожидался HTTP 200.`);
     return response;
   };

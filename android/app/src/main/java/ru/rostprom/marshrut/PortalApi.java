@@ -6,7 +6,8 @@ import java.net.*;
 import java.nio.charset.StandardCharsets;
 
 final class PortalApi {
-    static final String ORIGIN="https://open-key.ru";
+    static volatile String ORIGIN="https://logist45.ru";
+    static void init(android.content.Context c){ORIGIN=Prefs.get(c).getString("serverOrigin","https://logist45.ru");}
     private static volatile HttpURLConnection waiting;
     static final class WaitCancelled extends IOException {}
     static void cancelWait(){HttpURLConnection current=waiting;waiting=null;if(current!=null)new Thread(current::disconnect,"cancel-wait").start();}
@@ -20,14 +21,15 @@ final class PortalApi {
     static JSONObject post(String path,JSONObject body) throws Exception {return request(path,true,DeviceAuth.token(),body);}
     static JSONObject post(String path,JSONObject body,String credential) throws Exception {return request(path,true,credential,body);}
     private static JSONObject request(String path,boolean post,String credential,JSONObject body) throws Exception {
-        HttpURLConnection c=(HttpURLConnection)new URL(ORIGIN+"/portal-api/"+path).openConnection();
+        String origin=ORIGIN;if(credential.isEmpty()||!path.equals("mobile/disconnect")&&!credential.equals(DeviceAuth.token()))throw new ApiException(401);
+        HttpURLConnection c=(HttpURLConnection)new URL(origin+"/portal-api/"+path).openConnection();
         boolean longWait=path.contains("wait=25");if(longWait)waiting=c;
         try {
             c.setInstanceFollowRedirects(false);c.setConnectTimeout(12000);c.setReadTimeout(longWait?35000:15000);
             c.setRequestProperty("Accept","application/json");
             if(credential.isEmpty())throw new ApiException(401);
             c.setRequestProperty("Authorization","Bearer "+credential);
-            if(post){c.setRequestMethod("POST");c.setRequestProperty("Origin",ORIGIN);c.setRequestProperty("Content-Type","application/json");c.setDoOutput(true);try(OutputStream out=c.getOutputStream()){out.write((body==null?"{}":body.toString()).getBytes(StandardCharsets.UTF_8));}}
+            if(post){c.setRequestMethod("POST");c.setRequestProperty("Origin",origin);c.setRequestProperty("Content-Type","application/json");c.setDoOutput(true);try(OutputStream out=c.getOutputStream()){out.write((body==null?"{}":body.toString()).getBytes(StandardCharsets.UTF_8));}}
             int status=c.getResponseCode();if(status!=200)throw new ApiException(status);
             String type=c.getContentType();if(type==null||!type.contains("application/json"))throw new IOException("Сервер вернул не JSON");
             try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){

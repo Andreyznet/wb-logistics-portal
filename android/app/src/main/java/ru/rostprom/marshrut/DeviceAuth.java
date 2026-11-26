@@ -9,7 +9,7 @@ import javax.crypto.spec.GCMParameterSpec;
 // A revocable portal device credential, not a WB token or the employee's password.
 final class DeviceAuth {
     private static Context context;
-    static void init(Context c){context=c.getApplicationContext();}
+    static void init(Context c){context=c.getApplicationContext();PortalApi.init(context);}
     private static javax.crypto.SecretKey key() throws Exception {
         KeyStore ks=KeyStore.getInstance("AndroidKeyStore");ks.load(null);
         if(!ks.containsAlias("MarshrutDevice")){KeyGenerator generator=KeyGenerator.getInstance("AES","AndroidKeyStore");generator.init(new KeyGenParameterSpec.Builder("MarshrutDevice",KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build());generator.generateKey();}

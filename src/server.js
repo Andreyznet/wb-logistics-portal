@@ -12,7 +12,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { openStore, AppError, fail, businessDate, SESSION_IDLE_MS } from './store.js';
 import { BotWorker } from './bot.js';
 
@@ -95,6 +95,12 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         if(url.pathname==='/api/admin/devices'&&req.method==='GET')return json(200,{data:listDevices(store,user),users:store.users()});
         const blockMatch=/^\/api\/admin\/users\/(\d+)\/block$/.exec(url.pathname);
         if(blockMatch&&req.method==='POST')return json(200,blockAccount(store,Number(blockMatch[1]),(await body(req)).blocked,user));
+        if(['/api/mobile/app-update','/api/mobile/app-update/apk'].includes(url.pathname)&&req.method==='GET'){
+          if(!device)fail(401,'Подключите приложение заново.');
+          const apk=await readFile(resolve(publicDir,'downloads/marshrut.apk'));
+          if(url.pathname.endsWith('/apk')){res.writeHead(200,{...headers,'Content-Type':'application/vnd.android.package-archive','Content-Length':apk.length});return res.end(apk);}
+          return json(200,{versionCode:10,versionName:'1.1.6',size:apk.length,sha256:createHash('sha256').update(apk).digest('hex'),path:'mobile/app-update/apk'});
+        }
         if(url.pathname==='/api/mobile/heartbeat'&&req.method==='POST'){
           if(!device)fail(401,'Подключите телефон заново.');const input=await body(req);if(typeof input.foreground!=='boolean')fail(400,'Некорректный статус.');
           store.db.prepare('UPDATE mobile_devices SET foreground=?,last_ui_at=? WHERE id=?').run(input.foreground?1:0,new Date().toISOString(),device.id);return json(200,{ok:true});

@@ -20,7 +20,7 @@ final class PushRegistration {
     static synchronized boolean register(Context c){
         DeviceAuth.init(c);String credential=DeviceAuth.token(),token=Prefs.get(c).getString("fcmToken","");if(credential.isEmpty()||token.isEmpty())return true;
         try{JSONObject body=new JSONObject();body.put("token",token);body.put("enabled",Prefs.enabled(c)&&c.getSystemService(NotificationManager.class).areNotificationsEnabled());
-            body.put("deviceName",Build.MANUFACTURER+" "+Build.MODEL);body.put("appVersion","1.1.6");JSONObject result=PortalApi.post("mobile/push-token",body,credential);if(!credential.equals(DeviceAuth.token()))return true;
+            body.put("deviceName",Build.MANUFACTURER+" "+Build.MODEL);body.put("appVersion","1.1.7");JSONObject result=PortalApi.post("mobile/push-token",body,credential);if(!credential.equals(DeviceAuth.token()))return true;
             boolean ready=result.optBoolean("configured");Prefs.get(c).edit().putBoolean("pushReady",ready).putString("pushStatus",ready?"FCM подключён":"FCM: требуется настройка отправки на сервере").apply();
             if(ready&&Prefs.get(c).getBoolean("running",false))try{c.startService(new Intent(c,MonitorService.class).setAction("PUSH"));}catch(IllegalStateException ignored){}
             return true;

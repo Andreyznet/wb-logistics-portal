@@ -7,7 +7,13 @@ import java.nio.charset.StandardCharsets;
 
 final class PortalApi {
     static volatile String ORIGIN="https://logist45.ru";
-    static void init(android.content.Context c){ORIGIN=Prefs.get(c).getString("serverOrigin","https://logist45.ru");}
+    static synchronized void init(android.content.Context c){
+        android.content.SharedPreferences prefs=Prefs.get(c);String saved=prefs.getString("serverOrigin",null),next;
+        try{next=ServerOrigin.migrateLegacy(saved);}catch(IllegalArgumentException e){next=ServerOrigin.DEFAULT;}
+        boolean changed=saved!=null&&!next.equals(saved),legacyInstall=saved==null&&!prefs.getBoolean("logist45Migrated",false);
+        if(changed||legacyInstall){DeviceAuth.clear();Prefs.clearAccount(c);prefs.edit().putBoolean("running",false).apply();}
+        prefs.edit().putString("serverOrigin",next).putBoolean("logist45Migrated",true).commit();ORIGIN=next;
+    }
     private static volatile HttpURLConnection waiting;
     static final class WaitCancelled extends IOException {}
     static void cancelWait(){HttpURLConnection current=waiting;waiting=null;if(current!=null)new Thread(current::disconnect,"cancel-wait").start();}

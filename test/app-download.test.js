@@ -28,7 +28,7 @@ test('in-app update metadata and APK require active device auth for every role; 
  for(const user of store.users()){
   const browser={Cookie:'portal_session='+store.createSession(user.id)};assert.equal((await fetch(origin+'/api/mobile/app-update',{headers:browser})).status,401);
   const pair=connectMobile(store,user,'update-device-'+user.id+'-installation'),headers={Authorization:'Bearer '+pair.token};
-  const meta=await fetch(origin+'/api/mobile/app-update',{headers});assert.equal(meta.status,200);const data=await meta.json();assert.equal(data.versionCode,10);assert.equal(data.versionName,'1.1.6');assert.match(data.sha256,/^[a-f0-9]{64}$/);assert.equal(data.path,'mobile/app-update/apk');
+  const meta=await fetch(origin+'/api/mobile/app-update',{headers});assert.equal(meta.status,200);const data=await meta.json();assert.equal(data.versionCode,11);assert.equal(data.versionName,'1.1.7');assert.match(data.sha256,/^[a-f0-9]{64}$/);assert.equal(data.path,'mobile/app-update/apk');
   const response=await fetch(origin+'/portal-api/'+data.path,{headers});assert.equal(response.status,200);const apk=Buffer.from(await response.arrayBuffer());assert.equal(apk.length,data.size);assert.equal(createHash('sha256').update(apk).digest('hex'),data.sha256);
   store.db.prepare('UPDATE mobile_devices SET expires_at=0 WHERE user_id=?').run(user.id);assert.equal((await fetch(origin+'/api/mobile/app-update/apk',{headers})).status,401);
  }

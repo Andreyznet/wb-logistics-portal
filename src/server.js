@@ -99,7 +99,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
           if(!device)fail(401,'Подключите приложение заново.');
           const apk=await readFile(resolve(publicDir,'downloads/marshrut.apk'));
           if(url.pathname.endsWith('/apk')){res.writeHead(200,{...headers,'Content-Type':'application/vnd.android.package-archive','Content-Length':apk.length});return res.end(apk);}
-          return json(200,{versionCode:10,versionName:'1.1.6',size:apk.length,sha256:createHash('sha256').update(apk).digest('hex'),path:'mobile/app-update/apk'});
+          return json(200,{versionCode:11,versionName:'1.1.7',size:apk.length,sha256:createHash('sha256').update(apk).digest('hex'),path:'mobile/app-update/apk'});
         }
         if(url.pathname==='/api/mobile/heartbeat'&&req.method==='POST'){
           if(!device)fail(401,'Подключите телефон заново.');const input=await body(req);if(typeof input.foreground!=='boolean')fail(400,'Некорректный статус.');

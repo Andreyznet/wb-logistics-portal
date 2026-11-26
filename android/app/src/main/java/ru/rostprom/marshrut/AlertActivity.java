@@ -7,8 +7,8 @@ import android.widget.*;
 import org.json.*;
 
 public final class AlertActivity extends Activity {
-    private long id;private boolean registered=false;private final BroadcastReceiver access=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){if(AccountAccess.REVOKED.equals(i.getAction())||DeviceAuth.token().isEmpty())finish();}};
-    @Override public void onCreate(Bundle state){super.onCreate(state);if(Build.VERSION.SDK_INT>=33)registerReceiver(access,AccountAccess.filter(),Context.RECEIVER_NOT_EXPORTED);else registerReceiver(access,AccountAccess.filter());registered=true;setFinishOnTouchOutside(false);id=getIntent().getLongExtra("id",0);
+    private long id;private boolean registered=false;private final BroadcastReceiver access=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){if(AccountAccess.REVOKED.equals(i.getAction())||DeviceAuth.token().isEmpty()){finish();return;}if(MonitorService.UPDATE.equals(i.getAction())){try{JSONArray queue=new JSONArray(Prefs.get(c).getString("queue","[]"));boolean present=false;for(int n=0;n<queue.length();n++)if(queue.getJSONObject(n).getLong("id")==id)present=true;if(!present)finish();}catch(Exception ignored){}}}};
+    @Override public void onCreate(Bundle state){super.onCreate(state);IntentFilter filter=AccountAccess.filter();if(Build.VERSION.SDK_INT>=33)registerReceiver(access,filter,Context.RECEIVER_NOT_EXPORTED);else registerReceiver(access,filter);registered=true;setFinishOnTouchOutside(false);id=getIntent().getLongExtra("id",0);
         try{
             JSONArray queue=new JSONArray(Prefs.get(this).getString("queue","[]"));JSONObject alert=null;
             for(int i=0;i<queue.length();i++)if(queue.getJSONObject(i).getLong("id")==id)alert=queue.getJSONObject(i);

@@ -11,7 +11,7 @@ export function registerPush(store,device,input){
  store.db.prepare('UPDATE mobile_devices SET push_token=NULL WHERE push_token=? AND id<>?').run(input.token,device.id);
  store.db.prepare('UPDATE mobile_devices SET push_token=?,push_enabled=? WHERE id=?').run(input.token,input.enabled?1:0,device.id);
  // A phone connecting after an assignment still receives its unacknowledged queue.
- store.db.prepare("INSERT OR IGNORE INTO fcm_outbox(device_id,event_key,kind,created_at) SELECT ?, 'alert:'||a.id,'alert',? FROM acceptance_alerts a WHERE a.user_id=? AND (a.created_at>=? OR a.ack_at IS NULL) AND NOT EXISTS(SELECT 1 FROM mobile_alert_receipts r WHERE r.device_id=? AND r.alert_id=a.id)").run(device.id,Date.now(),device.user_id,device.registered_at,device.id);
+ store.db.prepare("INSERT OR IGNORE INTO fcm_outbox(device_id,event_key,kind,created_at) SELECT ?, 'alert:'||a.id,'alert',? FROM acceptance_alerts a WHERE a.user_id=? AND a.ack_at IS NULL AND NOT EXISTS(SELECT 1 FROM mobile_alert_receipts r WHERE r.device_id=? AND r.alert_id=a.id)").run(device.id,Date.now(),device.user_id,device.id);
  store.db.prepare('UPDATE mobile_devices SET device_name=?,app_version=? WHERE id=?').run(String(input.deviceName||device.device_name||'Android').slice(0,100),String(input.appVersion||device.app_version||'').slice(0,30),device.id);
  return {registered:true};
 }
@@ -48,11 +48,11 @@ export class FcmDispatcher {
  scan(){
   const db=this.store.db,now=this.clock(),read=key=>JSON.parse(db.prepare('SELECT value FROM settings WHERE key=?').get(key).value),write=(key,id)=>db.prepare('UPDATE settings SET value=? WHERE key=?').run(JSON.stringify(id),key);
   db.exec('BEGIN IMMEDIATE');try{
-   const alerts=db.prepare('SELECT id,user_id FROM acceptance_alerts WHERE id>? ORDER BY id LIMIT 200').all(read('fcm_alert_cursor'));
+   const alerts=db.prepare('SELECT id,user_id,ack_at FROM acceptance_alerts WHERE id>? ORDER BY id LIMIT 200').all(read('fcm_alert_cursor'));
    const logs=db.prepare('SELECT id,kind,payload FROM bot_logs WHERE id>? ORDER BY id LIMIT 500').all(read('fcm_log_cursor'));
    const insert=db.prepare('INSERT OR IGNORE INTO fcm_outbox(device_id,event_key,kind,created_at) VALUES(?,?,?,?)');
    const devices=db.prepare('SELECT d.id,d.user_id FROM mobile_devices d JOIN users u ON u.id=d.user_id WHERE d.push_token IS NOT NULL AND d.push_enabled=1 AND d.expires_at>? AND u.blocked=0 AND d.revoked_at IS NULL').all(now);
-   for(const a of alerts)for(const d of devices)if(d.user_id===a.user_id)insert.run(d.id,'alert:'+a.id,'alert',now);
+   for(const a of alerts)for(const d of devices)if(!a.ack_at&&d.user_id===a.user_id)insert.run(d.id,'alert:'+a.id,'alert',now);
    for(const log of logs){if(!['bot_enabled','bot_disabled','poll_failed','api_error','api_recovered'].includes(log.kind))continue;const p=JSON.parse(log.payload);if(['api_error','api_recovered'].includes(log.kind)&&p.notify!==true)continue;for(const d of devices)insert.run(d.id,'log:'+log.id,log.kind,now);}
    if(alerts.length)write('fcm_alert_cursor',alerts.at(-1).id);if(logs.length)write('fcm_log_cursor',logs.at(-1).id);
    db.prepare('DELETE FROM fcm_outbox WHERE created_at<?').run(now-86400000);db.exec('COMMIT');
@@ -65,6 +65,7 @@ export class FcmDispatcher {
    const jobs=db.prepare("SELECT o.*,d.push_token FROM fcm_outbox o JOIN mobile_devices d ON d.id=o.device_id JOIN users u ON u.id=d.user_id WHERE o.sent_at IS NULL AND o.retry_at<=? AND d.push_token IS NOT NULL AND ((o.kind='access_revoked' AND o.event_key='revoke:'||d.token_hash) OR (o.kind<>'access_revoked' AND d.push_enabled=1 AND d.expires_at>? AND u.blocked=0 AND d.revoked_at IS NULL)) ORDER BY CASE WHEN o.kind='access_revoked' THEN 0 ELSE 1 END,o.id LIMIT 20").all(this.clock(),this.clock());
    for(const job of jobs)try{
     if(job.kind!=='access_revoked'&&!db.prepare('SELECT d.id FROM mobile_devices d JOIN users u ON u.id=d.user_id WHERE d.id=? AND d.revoked_at IS NULL AND u.blocked=0').get(job.device_id))continue;
+    if(job.kind==='alert'&&!db.prepare('SELECT id FROM acceptance_alerts WHERE id=? AND ack_at IS NULL').get(Number(job.event_key.slice(6)))){db.prepare('UPDATE fcm_outbox SET sent_at=? WHERE id=?').run(this.clock(),job.id);continue;}
     await this.send(job.push_token,{event:job.event_key,kind:job.kind,...(job.kind==='access_revoked'?{accessHash:job.event_key.slice(7)}:{})});db.prepare('UPDATE fcm_outbox SET sent_at=? WHERE id=?').run(this.clock(),job.id);
    }catch(error){
     if(error.unregistered){db.prepare('UPDATE mobile_devices SET push_token=NULL WHERE id=? AND push_token=?').run(job.device_id,job.push_token);db.prepare('UPDATE fcm_outbox SET sent_at=? WHERE id=?').run(this.clock(),job.id);}

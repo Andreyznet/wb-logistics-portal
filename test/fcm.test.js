@@ -17,13 +17,13 @@ function fixture(){
  registerPush(store,a,{token:'owner-fcm-registration-token',enabled:true});registerPush(store,b,{token:'other-fcm-registration-token',enabled:true});
  return {store,owner,other,a,b};
 }
-test('FCM fans out alerts to their recipients, survives browser acknowledgement and does not resend successful jobs',async()=>{
+test('FCM propagates browser acknowledgement instead of replaying acknowledged alerts',async()=>{
  const {store,owner}=fixture();try{
   const sent=[],worker=new FcmDispatcher(store,{send:async(token,data)=>sent.push({token,data})});
-  const alert=store.createTestAlert(null,owner);store.acknowledgeAlert(alert.id,owner);
+  const alert=store.createTestAlert(null,owner);worker.scan();store.acknowledgeAlert(alert.id,owner);
   store.recordBotLog('api_error',{notify:false,message:'temporary'});
   await worker.tick();await worker.tick();
-  assert.deepEqual(sent,[{token:'owner-fcm-registration-token',data:{event:'alert:'+alert.id,kind:'alert'}}]);
+  assert.deepEqual(sent,[{token:'owner-fcm-registration-token',data:{event:'ack:'+alert.id,kind:'alert_ack'}}]);
   store.recordBotLog('bot_enabled',{message:'started'});store.recordBotLog('api_error',{notify:true,message:'private technical detail'});
   await worker.tick();assert.equal(sent.length,5);assert.ok(!JSON.stringify(sent).includes('private technical detail'));
  }finally{store.close();}

@@ -41,7 +41,7 @@ test('Android feed keeps durable state changes, isolates alerts, strips technica
  }finally{store.close();}
 });
 
-test('each phone receives test alert even after PC acknowledges; phone receipts are independent and tokens are revocable',()=>{
+test('acknowledgement is shared between browsers and phones; tokens remain revocable',()=>{
  const store=openStore(':memory:');try{
   seedPreviewDemo(store);initMobile(store);const admin=store.users().find(u=>u.role==='super_admin');
   const first=connectMobile(store,admin,'installation-phone-111'),second=connectMobile(store,admin,'installation-phone-222');
@@ -49,8 +49,8 @@ test('each phone receives test alert even after PC acknowledges; phone receipts 
   assert.ok(a&&b);assert.notEqual(first.token,second.token);assert.ok(!JSON.stringify(store.db.prepare('SELECT * FROM mobile_devices').all()).includes(first.token));
   const alert=store.createTestAlert(null,admin);store.acknowledgeAlert(alert.id,admin);
   assert.equal(store.userAlerts(admin).length,0);
-  assert.ok(mobileSync(store,admin,{},a).alerts.some(x=>x.id===alert.id));assert.ok(mobileSync(store,admin,{},b).alerts.some(x=>x.id===alert.id));
-  ackMobile(store,admin,a,alert.id);assert.equal(mobileSync(store,admin,{},a).alerts.length,0);assert.equal(mobileSync(store,admin,{},b).alerts.length,1);
+  assert.equal(mobileSync(store,admin,{},a).alerts.length,0);assert.equal(mobileSync(store,admin,{},b).alerts.length,0);const next=store.createTestAlert(null,admin);assert.equal(mobileSync(store,admin,{},a).alerts.length,1);assert.equal(mobileSync(store,admin,{},b).alerts.length,1);
+  ackMobile(store,admin,a,next.id);assert.equal(mobileSync(store,admin,{},a).alerts.length,0);assert.equal(mobileSync(store,admin,{},b).alerts.length,0);assert.equal(store.userAlerts(admin).length,0);ackMobile(store,admin,a,next.id);
   const rotated=connectMobile(store,admin,'installation-phone-111');assert.equal(mobileDevice(store,'Bearer '+first.token),null);assert.ok(mobileDevice(store,'Bearer '+rotated.token));
   const logist=store.users().find(u=>u.role==='logist');assert.throws(()=>ackMobile(store,logist,b,alert.id));
   connectMobile(store,logist,'installation-phone-222');assert.equal(mobileDevice(store,'Bearer '+second.token),null);
@@ -74,4 +74,15 @@ test('Android sync authenticates through the portal cookie and rejects an invali
  const url='http://127.0.0.1:'+server.address().port+'/portal-api/mobile/sync';
  try{assert.equal((await fetch(url)).status,401);for(const user of store.users()){const headers={Cookie:'portal_session='+store.createSession(user.id)};const response=await fetch(url,{headers});assert.equal(response.status,200);assert.equal((await response.json()).user.id,user.id);assert.equal((await fetch(url+'?since=bad',{headers})).status,400);}}
  finally{await new Promise(resolve=>server.close(resolve));store.close();}
+});
+
+
+test('phone acknowledgement wakes another phone wait and preserves another employee alert',async()=>{
+ const store=openStore(':memory:');try{
+ seedPreviewDemo(store);initMobile(store);const owner=store.users().find(u=>u.role==='super_admin'),other=store.users().find(u=>u.role==='logist');
+ const a=mobileDevice(store,'Bearer '+connectMobile(store,owner,'shared-ack-phone-111').token),b=mobileDevice(store,'Bearer '+connectMobile(store,owner,'shared-ack-phone-222').token);
+ const alert=store.createTestAlert(null,owner),foreign=store.createTestAlert(null,owner,other.id),initial=mobileSync(store,owner,{},b),controller=new AbortController();
+ const pending=waitMobile(store,owner,{since:initial.cursor,revision:initial.revision,wait:25},b,controller.signal);
+ ackMobile(store,owner,a,alert.id);assert.equal((await pending).alerts.length,0);assert.equal(store.userAlerts(owner).length,0);assert.equal(store.userAlerts(other)[0].id,foreign.id);
+ }finally{store.close();}
 });

@@ -135,7 +135,9 @@ export function createBotStore({ db, file, timeZone, audit, transaction, fail })
     if(delivered)recordBotLog('observation_alert',{id:candidate.id,routeId:candidate.routeId,message:'Найдена заявка: уведомлены авторы и подписчики планов «Не брать в работу». PUT не отправлялся для этих планов.'});return delivered;
   });}
   function userAlerts(actor){if(!actor?.id)fail(401,'Войдите в аккаунт.');return db.prepare('SELECT id,payload,created_at FROM acceptance_alerts WHERE user_id=? AND ack_at IS NULL ORDER BY id LIMIT 30').all(actor.id).map(r=>({...r,payload:JSON.parse(r.payload)}));}
-  function acknowledgeAlert(id,actor){if(!actor?.id)fail(401,'Войдите в аккаунт.');const row=db.prepare('SELECT id FROM acceptance_alerts WHERE id=? AND user_id=?').get(id,actor.id);if(!row)fail(404,'Уведомление не найдено.');db.prepare('UPDATE acceptance_alerts SET ack_at=COALESCE(ack_at,?) WHERE id=?').run(new Date().toISOString(),id);return {ok:true};}
+  function acknowledgeAlert(id,actor){if(!actor?.id)fail(401,'Войдите в аккаунт.');const row=db.prepare('SELECT id FROM acceptance_alerts WHERE id=? AND user_id=?').get(id,actor.id);if(!row)fail(404,'Уведомление не найдено.');return transaction(()=>{const changed=db.prepare('UPDATE acceptance_alerts SET ack_at=? WHERE id=? AND ack_at IS NULL').run(new Date().toISOString(),id);
+    if(changed.changes&&db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='fcm_outbox'").get())db.prepare("INSERT OR IGNORE INTO fcm_outbox(device_id,event_key,kind,created_at) SELECT id,?,'alert_ack',? FROM mobile_devices WHERE user_id=? AND push_token IS NOT NULL AND push_enabled=1 AND revoked_at IS NULL AND expires_at>?").run('ack:'+id,Date.now(),actor.id,Date.now());
+    return {ok:true};});}
   function createTestAlert(planId,actor,recipientId=null){
     requireAdmin(actor);let plan=null;
     if(planId!=null){if(!Number.isSafeInteger(planId)||planId<1)fail(400,'Выберите план.');plan=db.prepare('SELECT * FROM requests WHERE id=?').get(planId);if(!plan)fail(404,'План не найден.');}

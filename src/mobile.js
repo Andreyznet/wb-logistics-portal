@@ -18,13 +18,14 @@ export function mobileDevice(store,authorization){
  return row?{...row,user:{id:row.user_id,name:row.name,role:row.role}}:null;
 }
 export function mobileAlerts(store,user,device){
- return store.db.prepare('SELECT a.id,a.payload,a.created_at FROM acceptance_alerts a WHERE a.user_id=? AND (a.created_at>=? OR a.ack_at IS NULL) AND NOT EXISTS(SELECT 1 FROM mobile_alert_receipts r WHERE r.device_id=? AND r.alert_id=a.id) ORDER BY a.id LIMIT 30').all(user.id,device.registered_at,device.id).map(a=>({...a,payload:JSON.parse(a.payload)}));
+ return store.db.prepare('SELECT a.id,a.payload,a.created_at FROM acceptance_alerts a WHERE a.user_id=? AND a.ack_at IS NULL AND NOT EXISTS(SELECT 1 FROM mobile_alert_receipts r WHERE r.device_id=? AND r.alert_id=a.id) ORDER BY a.id LIMIT 30').all(user.id,device.id).map(a=>({...a,payload:JSON.parse(a.payload)}));
 }
 export function ackMobile(store,user,device,id){
  if(!store.db.prepare('SELECT id FROM acceptance_alerts WHERE id=? AND user_id=?').get(id,user.id)){const error=new Error('Уведомление не найдено.');error.status=404;throw error;}
+ store.acknowledgeAlert(id,user);
  store.db.prepare('INSERT OR IGNORE INTO mobile_alert_receipts VALUES(?,?,?)').run(device.id,id,new Date().toISOString());return {ok:true};
 }
-// Browser acknowledgement and each phone's acknowledgement are independent.
+// Acknowledgement is shared by all sessions and phones of this user.
 export function mobileSync(store,user,query,device=null){
  const admin=['admin','super_admin'].includes(user.role),runtime=store.getBotStatus({role:'admin'},true).runtime||{};
  const max=store.db.prepare('SELECT COALESCE(MAX(id),0) AS id FROM bot_logs').get().id;

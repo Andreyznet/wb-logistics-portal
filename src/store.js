@@ -276,6 +276,11 @@ export function openStore(file, { timeZone = 'Asia/Yekaterinburg' } = {}) {
       return {watching:enabled};
     });
   }
+  if(!db.prepare("SELECT key FROM settings WHERE key='manager_bot_access_v1'").get())transaction(()=>{
+    const saved=db.prepare("SELECT value FROM settings WHERE key='role_permissions'").get();
+    if(saved){const matrix=JSON.parse(saved.value);matrix.admin={...matrix.admin,bot:true,'bot.manage':true};db.prepare("UPDATE settings SET value=? WHERE key='role_permissions'").run(JSON.stringify(matrix));}
+    db.prepare("INSERT INTO settings(key,value) VALUES('manager_bot_access_v1','true')").run();
+  });
   const botStore=createBotStore({db,file,timeZone,audit,transaction,fail});
   return { notificationSettings,saveNotificationSettings,...botStore, db, timeZone, userCount, addUser, updateUser, saveAvatar, getAvatar, login, createSession, session, sessionExpiresAt, renewSession, importDirectory, catalog, catalogSummary, catalogPage, cacheCatalogRows, saveRequest, changeStatus, watchRequest,
     logout: token => db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hashSession(token || '')),

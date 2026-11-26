@@ -16,6 +16,7 @@ public final class PushService extends FirebaseMessagingService {
         if(message.getPriority()==RemoteMessage.PRIORITY_HIGH){
             try{startForegroundService(new Intent(this,MonitorService.class).setAction("PUSH"));return;}catch(Exception ignored){}
         }
+        if("alert_ack".equals(data.get("kind"))){try{startService(new Intent(this,MonitorService.class).setAction("PUSH"));}catch(Exception ignored){}return;}
         // Downgraded FCM messages cannot start an FGS. Always show a notification instead.
         manager.createNotificationChannel(new NotificationChannel("fcm_fallback","Push-уведомления",NotificationManager.IMPORTANCE_HIGH));
         PendingIntent tap=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);

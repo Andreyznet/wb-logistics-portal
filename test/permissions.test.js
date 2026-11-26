@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {openStore} from '../src/store.js';
 import {createPortal,seedPreviewDemo} from '../src/server.js';
 import {permissionMatrix,savePermissions,permissionsFor} from '../src/permissions.js';
@@ -45,4 +48,18 @@ test('live HTTP permissions enforce grants and revocations for existing sessions
   assert.equal((await call(logist,'/bot/settings')).status,403);
   const access=await (await call(logist,'/access')).json();assert.equal(access.permissions.bot,false);
  }finally{await new Promise(r=>server.close(r));store.close();}
+});
+
+
+test('legacy manager bot permission is granted once and manager can save settings; later revocation persists',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'manager-bot-')),file=join(dir,'portal.sqlite');let store=openStore(file),server;
+ try{
+ seedPreviewDemo(store);const old=permissionMatrix(store).matrix;old.admin['bot.manage']=false;store.db.prepare("INSERT INTO settings(key,value) VALUES('role_permissions',?)").run(JSON.stringify(old));store.db.prepare("DELETE FROM settings WHERE key='manager_bot_access_v1'").run();store.close();store=openStore(file);
+ const manager=store.users().find(u=>u.role==='admin');assert.equal(permissionsFor(store,manager)['bot.manage'],true);
+ server=createPortal({store});await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin='http://127.0.0.1:'+server.address().port,headers={Cookie:'portal_session='+store.createSession(manager.id),Origin:origin,'Content-Type':'application/json'};
+ const settings=await(await fetch(origin+'/api/bot/settings',{headers})).json();const saved=await fetch(origin+'/api/bot/settings',{method:'POST',headers,body:JSON.stringify({...settings.settings,requestsPerMinute:12})});assert.equal(saved.status,200);assert.equal((await saved.json()).settings.requestsPerMinute,12);
+ const matrix=permissionMatrix(store);matrix.matrix.admin['bot.manage']=false;savePermissions(store,matrix,store.users().find(u=>u.role==='super_admin'));
+ assert.equal((await fetch(origin+'/api/bot/settings',{method:'POST',headers,body:JSON.stringify(settings.settings)})).status,403);
+ await new Promise(r=>server.close(r));server=null;store.close();store=openStore(file);assert.equal(permissionsFor(store,manager)['bot.manage'],false);
+ }finally{if(server)await new Promise(r=>server.close(r));store.close();await rm(dir,{recursive:true,force:true});}
 });

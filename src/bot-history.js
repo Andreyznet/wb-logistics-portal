@@ -19,11 +19,11 @@ export function createBotHistory(db,fail,cleanupResponses=()=>{}){
   // Keep successful/pending claims forever; only expire bulky diagnostic response bodies.
   if(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='acceptance_attempts'").get())db.prepare("UPDATE acceptance_attempts SET response=NULL WHERE updated_at<? AND state NOT IN ('pending','uncertain')").run(now-90*86400000);
  }
- function page(kind,input,actor){
+ function page(kind,input,actor,exporting=false){
   if(!['super_admin','admin','logist'].includes(actor?.role)||kind==='logs'&&actor.role!=='super_admin')fail(403,'Журнал доступен только администратору.');
   if(!['logs','events'].includes(kind))fail(400,'Неизвестный журнал.');cleanup();
-  const page=Number(input.page??1),size=Number(input.size??30);
-  if(!Number.isSafeInteger(page)||page<1||page>1000000||!Number.isSafeInteger(size)||size<1||size>100)fail(400,'Некорректная страница.');
+  const page=Number(input.page??1),size=exporting?500:Number(input.size??30);
+  if(!Number.isSafeInteger(page)||page<1||page>1000000||!Number.isSafeInteger(size)||size<1||size>(exporting?500:100))fail(400,'Некорректная страница.');
   const table=kind==='logs'?'bot_logs':'bot_events';
   const maxId=input.maxId==null?db.prepare('SELECT COALESCE(max(id),0) AS id FROM '+table).get().id:Number(input.maxId);
   if(!Number.isSafeInteger(maxId)||maxId<0)fail(400,'Некорректная граница журнала.');
@@ -44,11 +44,15 @@ export function createBotHistory(db,fail,cleanupResponses=()=>{}){
   const order=sorters.map(s=>{if(!s||!Object.hasOwn(fields,s.field)||!['asc','desc'].includes(s.dir))fail(400,'Некорректная сортировка.');return fields[s.field]+' '+s.dir;});order.push('e.id DESC');
   const join=kind==='events'?" LEFT JOIN bot_acceptance_results r ON r.id=json_extract(CASE WHEN json_valid(e.payload) THEN e.payload ELSE '{}' END,'$.id')":'',where=clauses.length?' WHERE '+clauses.join(' AND '):'';
   const total=db.prepare('SELECT count(*) AS n FROM '+table+' e'+join+where).get(...args).n;
-  const rows=db.prepare('SELECT e.*'+(kind==='events'?',r.kind AS outcome_kind,r.payload AS outcome_payload':'')+' FROM '+table+' e'+join+where+' ORDER BY '+order.join(',')+' LIMIT ? OFFSET ?').all(...args,size,(page-1)*size).map(row=>({...row,payload:parsePayload(row.payload),...(row.outcome_payload?{outcome:{kind:row.outcome_kind,payload:parsePayload(row.outcome_payload)}}:{})}));
+  const select='SELECT e.*'+(kind==='events'?',r.kind AS outcome_kind,r.payload AS outcome_payload':'')+' FROM '+table+' e'+join+where+' ORDER BY '+order.join(',');
+  const formatRows=values=>{const rows=values.map(row=>({...row,payload:parsePayload(row.payload),...(row.outcome_payload?{outcome:{kind:row.outcome_kind,payload:parsePayload(row.outcome_payload)}}:{})}));
   const names=new Map(),routeName=id=>{if(!names.has(id))names.set(id,db.prepare("SELECT label FROM catalog WHERE kind='route' AND id=?").get(id)?.label||null);return names.get(id);};
   for(const row of rows){const ids=[row.payload.routeId,...(Array.isArray(row.payload.routes)?row.payload.routes:[])].filter(id=>Number.isSafeInteger(Number(id))&&Number(id)>0);row.payload.routeNames={...row.payload.routeNames,...Object.fromEntries(ids.map(id=>[id,routeName(Number(id))]).filter(([,name])=>name))};if(row.payload.routeId)row.payload.routeName=routeName(Number(row.payload.routeId))||row.payload.routeName||null;}
   const data=actor.role==='super_admin'?rows:rows.map(row=>({id:row.id,kind:row.kind,created_at:row.created_at,payload:{id:row.payload.id,routeId:row.payload.routeId,routeName:row.payload.routeName,routeNames:row.payload.routeNames,carDt:row.payload.carDt},...(row.outcome?{outcome:{kind:row.outcome.kind,payload:{message:row.outcome.payload.message}}}:{})}));
+  return data;};
+  if(exporting)return {total,maxId,rows:function*(){let offset=0;while(true){const values=db.prepare(select+' LIMIT ? OFFSET ?').all(...args,500,offset);if(!values.length)return;yield*formatRows(values);offset+=values.length;}}};
+  const data=formatRows(db.prepare(select+' LIMIT ? OFFSET ?').all(...args,size,(page-1)*size));
   return {data,total,maxId,last_page:Math.max(1,Math.ceil(total/size)),last_row:total};
  }
- return {cleanupBotHistory:cleanup,botHistoryPage:page};
+ return {cleanupBotHistory:cleanup,botHistoryPage:page,botHistoryExport:(kind,input,actor)=>page(kind,{...input,page:1},actor,true)};
 }

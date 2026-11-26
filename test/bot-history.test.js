@@ -72,3 +72,27 @@ test('history export keeps damaged legacy payloads and reaches later pages',()=>
  assert.equal(store.botHistoryPage('logs',{filters:JSON.stringify([{field:'http',value:'200'}])},admin).total,4199);
  }finally{store.close();}
 });
+
+
+test('history export downloads all pages in one HTTP response and preserves filters, ordering and role redaction',async()=>{
+ const {store,admin}=setup();const at=iso(0);for(let id=1;id<=1205;id++)log(store,id,at,{id,routeId:id%2?65522:61373,httpStatus:id%2?200:503});
+ const snapshot=store.botHistoryExport('logs',{},admin);log(store,1206,at);assert.equal([...snapshot.rows()].length,1205,'new records must not move export boundary');
+ const server=createPortal({store});let requests=0;server.on('request',()=>requests++);await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin='http://127.0.0.1:'+server.address().port;
+ try{
+ const headers={Cookie:'portal_session='+store.createSession(admin.id)},params=new URLSearchParams({from:at,to:at,filters:JSON.stringify([{field:'routes',value:'65522'}]),sorters:JSON.stringify([{field:'id',dir:'asc'}])});
+ const response=await fetch(origin+'/portal-api/bot/history/logs/export?'+params,{headers});assert.equal(response.status,200);assert.match(response.headers.get('content-disposition'),/bot-logs.json/);const body=await response.json();assert.equal(requests,1);assert.equal(body.data.length,603);assert.equal(body.total,603);assert.equal(body.data[0].id,1);assert.equal(body.data.at(-1).id,1205);
+ assert.equal((await fetch(origin+'/api/bot/history/logs/export')).status,401);
+ const logist=store.addUser({username:'logist',name:'Logist',password:'testing-password-123',role:'logist'},admin),userHeaders={Cookie:'portal_session='+store.createSession(logist.id)};
+ assert.equal((await fetch(origin+'/api/bot/history/logs/export',{headers:userHeaders})).status,403);
+ store.db.prepare('INSERT INTO bot_events(kind,payload,created_at) VALUES(?,?,?)').run('candidate_found',JSON.stringify({id:100,routeId:65522,curl:'private-command',snapshotId:999}),at);
+ const events=await(await fetch(origin+'/api/bot/history/events/export',{headers:userHeaders})).json();assert.equal(events.data.length,1);assert.equal(JSON.stringify(events).includes('private-command'),false);assert.equal(events.data[0].payload.snapshotId,undefined);
+ assert.equal((await fetch(origin+'/api/bot/history/logs/export?from=bad',{headers})).status,400);
+ }finally{await new Promise(r=>server.close(r));store.close();}
+});
+
+test('history download URL is one export request retaining table search, period and sort',()=>{
+ const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8'),block=source.slice(source.indexOf('const historyRanges='));
+ const context=vm.createContext({URLSearchParams,Date,logNames:{},document:{},state:{bot:{}}});vm.runInContext(block,context);
+ vm.runInContext("historyTable=()=>({getFilters:()=>[{field:'http',value:'200'}],getSorters:()=>[{field:'time',dir:'asc'}]});historyRanges.logs={q:'65522',from:'2026-11-25T00:00:00Z'}",context);
+ const url=vm.runInContext("historyExportUrl('logs')",context),parsed=new URL(url,'http://localhost');assert.equal(parsed.pathname,'/portal-api/bot/history/logs/export');assert.equal(parsed.searchParams.has('page'),false);assert.equal(parsed.searchParams.has('size'),false);assert.equal(parsed.searchParams.get('q'),'65522');assert.equal(JSON.parse(parsed.searchParams.get('sorters'))[0].dir,'asc');assert.equal(JSON.parse(parsed.searchParams.get('filters'))[0].value,'200');
+});

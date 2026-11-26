@@ -186,6 +186,15 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
             return json(200,{settings,...store.getBotStatus(managerActor(user),url.searchParams.get('summary')==='1')});
           }
         }
+        const historyExportMatch=/^\/api\/bot\/history\/(logs|events)\/export$/.exec(url.pathname);
+        if(historyExportMatch&&req.method==='GET'){
+          const kind=historyExportMatch[1];check(kind==='logs'?'logs':'found');const input=Object.fromEntries(url.searchParams),actor=kind==='logs'||allowed(store,user,'found.details')?diagnosticActor(user):{...user,role:'logist'};
+          const exported=store.botHistoryExport(kind,input,actor);
+          res.writeHead(200,{...headers,'Content-Type':'application/json; charset=utf-8','Content-Disposition':'attachment; filename="bot-'+kind+'.json"'});
+          res.write(JSON.stringify({period:{from:input.from||null,to:input.to||null,q:input.q||''},total:exported.total,maxId:exported.maxId}).slice(0,-1)+',"data":[');let first=true;
+          for(const row of exported.rows()){if(res.destroyed)return;const chunk=(first?'':',')+JSON.stringify(row);first=false;if(!res.write(chunk))await new Promise(resolve=>{const done=()=>{res.removeListener('drain',done);res.removeListener('close',done);resolve();};res.once('drain',done);res.once('close',done);});}
+          return res.end(']}');
+        }
         if(req.method==='GET'&&['/api/bot/history/logs','/api/bot/history/events'].includes(url.pathname))return json(200,store.botHistoryPage(url.pathname.endsWith('/logs')?'logs':'events',Object.fromEntries(url.searchParams),url.pathname.endsWith('/logs')||allowed(store,user,'found.details')?diagnosticActor(user):{...user,role:'logist'}));
         const deleteEventMatch=/^\/api\/bot\/events\/(\d+)\/delete$/.exec(url.pathname);
         if(deleteEventMatch&&req.method==='POST')return json(200,store.deleteBotEvent(Number(deleteEventMatch[1]),diagnosticActor(user)));

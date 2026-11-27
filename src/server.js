@@ -39,7 +39,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
   const attempts = new Map();
   const remainders=createRemainders(store,{fetchImpl:directoryFetch});
   const catalogPager=createCatalogPager(store,{fetchImpl:directoryFetch});
-  return createServer(async (req, res) => {
+  const server=createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     // Dedicated prefix avoids preview-platform authentication routes; old clients remain supported.
     if(url.pathname.startsWith('/portal-api/'))url.pathname='/api/'+url.pathname.slice('/portal-api/'.length);
@@ -249,6 +249,9 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
       else res.end();
     }
   });
+  server.on('listening',()=>{if(!demoMode)remainders.start();});
+  server.on('close',()=>remainders.stop());
+  return server;
 }
 
 export function seedPreviewDemo(store) {

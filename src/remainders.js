@@ -3,6 +3,7 @@ import {monitoredFetch} from './api-monitor.js';
 import {fail} from './store.js';
 export const REMAINDERS_URL='https://logistics.wb.ru/reports-service/api/v1/containers/src-offices';
 const TTL=300000;
+export const AUTO_REFRESH_MS=15*60*1000;
 const positive=v=>Number.isSafeInteger(Number(v))&&Number(v)>0;
 export function routeOffices(route){
  if(positive(route.src_office_id)&&Array.isArray(route.dst_office_ids))return route.dst_office_ids.length===1&&positive(route.dst_office_ids[0])?[Number(route.src_office_id),Number(route.dst_office_ids[0])]:null;
@@ -30,10 +31,12 @@ export function parseRemainders(payload){
  return result;
 }
 export function createRemainders(store,{fetchImpl=fetch,clock=Date.now}={}){
- const request=monitoredFetch(store,fetchImpl);let pending=null,lastAttempt=0;
+ const request=monitoredFetch(store,fetchImpl);let pending=null,lastAttempt=0,lastAutoAttempt=0,autoRunning=false,timer=null;
  const scope=()=>{const c=store.botConfig();return createHash('sha256').update((c.token||'')+':'+c.supplierId).digest('hex');};
  const read=()=>{const row=store.db.prepare("SELECT value FROM settings WHERE key='remainders_cache'").get();if(!row)return null;const saved=JSON.parse(row.value);return saved.scope===scope()?saved:null;};
- function snapshot(){const saved=read(),routes=store.db.prepare("SELECT id,payload FROM catalog WHERE kind='route'").all(),data={};for(const route of routes){const pair=routeOffices(JSON.parse(route.payload));data[route.id]=pair?saved?.data[pair.join(':')]??null:null;}return {data,fetchedAt:saved?.fetchedAt||null,stale:!saved||clock()-saved.fetchedAt>=TTL};}
+ const eligible=()=>Boolean(store.botConfig().token)&&Boolean(store.db.prepare("SELECT 1 FROM requests WHERE status='waiting' AND found_wb_id IS NULL LIMIT 1").get());
+ const nextDue=()=>Math.max((read()?.fetchedAt||0)+AUTO_REFRESH_MS,lastAutoAttempt?lastAutoAttempt+AUTO_REFRESH_MS:0,lastAttempt?lastAttempt+30000:0);
+ function snapshot(){const saved=read(),routes=store.db.prepare("SELECT id,payload FROM catalog WHERE kind='route'").all(),data={};for(const route of routes){const pair=routeOffices(JSON.parse(route.payload));data[route.id]=pair?saved?.data[pair.join(':')]??null:null;}return {data,fetchedAt:saved?.fetchedAt||null,stale:!saved||clock()-saved.fetchedAt>=AUTO_REFRESH_MS,autoRefreshMinutes:15,nextRefreshAt:autoRunning&&eligible()?Math.max(clock(),nextDue()):null};}
  async function refresh(){
   const saved=read();if(saved&&clock()-saved.fetchedAt<TTL)return snapshot();if(pending)return pending;
   if(lastAttempt&&clock()-lastAttempt<30000)fail(429,'Повторите обновление остатков через 30 секунд.');
@@ -45,5 +48,9 @@ export function createRemainders(store,{fetchImpl=fetch,clock=Date.now}={}){
    store.db.prepare("INSERT INTO settings(key,value) VALUES('remainders_cache',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify({scope:initialScope,fetchedAt:clock(),data}));return snapshot();
   })();try{return await pending;}finally{pending=null;}
  }
- return {snapshot,refresh};
+ async function autoRefresh(){if(!eligible()||clock()<nextDue())return;lastAutoAttempt=clock();try{await refresh();}catch{/* API monitoring records the failure; keep cached data and retry in 15 minutes. */}}
+ function schedule(){if(!autoRunning)return;const delay=eligible()?Math.min(60000,Math.max(1000,nextDue()-clock())):60000;timer=setTimeout(async()=>{try{await autoRefresh();}finally{schedule();}},delay);timer.unref?.();}
+ function start(){if(autoRunning)return;autoRunning=true;schedule();}
+ function stop(){autoRunning=false;clearTimeout(timer);timer=null;}
+ return {snapshot,refresh,autoRefresh,start,stop};
 }

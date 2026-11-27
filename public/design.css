@@ -2391,3 +2391,5 @@ dialog::backdrop {
 .requests-table .accepted-at{display:flex;flex-wrap:wrap;gap:0 5px;font-size:11px;line-height:1.5;font-variant-numeric:tabular-nums}.requests-table .accepted-at span{white-space:nowrap}
 
 .route-remainders{display:block;white-space:normal;overflow-wrap:anywhere;margin-top:4px}.remainder-time{display:block;font-size:10px;opacity:.8;margin-top:2px}
+
+.remainders-schedule{margin:0;padding:0 20px 12px;color:var(--muted,#71809b);font-size:11px;line-height:1.6;overflow-wrap:anywhere}

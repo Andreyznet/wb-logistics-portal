@@ -1,3 +1,4 @@
+import {createRemainders} from './remainders.js';
 import {listDevices,blockAccount} from './account-access.js';
 import {permissionsFor,allowed,requirePermission,permissionMatrix,savePermissions,managerActor,diagnosticActor} from './permissions.js';
 import {notificationSounds} from './notification-sounds.js';
@@ -36,6 +37,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
   initMobile(store);
   initFcm(store);
   const attempts = new Map();
+  const remainders=createRemainders(store,{fetchImpl:directoryFetch});
   const catalogPager=createCatalogPager(store,{fetchImpl:directoryFetch});
   return createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -114,6 +116,7 @@ export function createPortal({ store, setupToken = '', trustProxy = false, botWo
         if(path==='/api/activity')check('activity');
         if(path==='/api/dashboard')check('dashboard');
         if(path==='/api/knowledge')check('knowledge');
+        if(path==='/api/requests/remainders'||path==='/api/requests/remainders/refresh'){check('requests');if(path.endsWith('/refresh')&&method==='POST')return json(200,await remainders.refresh());if(!path.endsWith('/refresh')&&method==='GET')return json(200,remainders.snapshot());fail(405,'Метод не поддерживается.');}
         if(path==='/api/requests')check(method==='GET'?'requests':'requests.create');
         if(/^\/api\/requests\/\d+(?:\/status|\/watch)?$/.test(path)&&method==='POST')check(path.endsWith('/watch')?'requests.watch':path.endsWith('/status')?'requests.status':'requests.edit');
         if(path==='/api/users'||/^\/api\/users\/\d+$/.test(path))check(method==='GET'?'users':'users.manage');

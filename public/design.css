@@ -2389,3 +2389,5 @@ dialog::backdrop {
 .acceptance-success-mark.is-error{color:#dc3545;background:rgba(220,53,69,.12)}
 
 .requests-table .accepted-at{display:flex;flex-wrap:wrap;gap:0 5px;font-size:11px;line-height:1.5;font-variant-numeric:tabular-nums}.requests-table .accepted-at span{white-space:nowrap}
+
+.route-remainders{display:block;white-space:normal;overflow-wrap:anywhere;margin-top:4px}.remainder-time{display:block;font-size:10px;opacity:.8;margin-top:2px}

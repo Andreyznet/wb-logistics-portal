@@ -135,7 +135,7 @@ export function parseRoutecarPage(payload){
   if(!/^[1-9]\d*$/.test(String(row?.routecar_id)))throw new Error('Invalid route ID');
   const id=Number(row.routecar_id),name=row.routecar_name;
   if(!Number.isSafeInteger(id)||id>2147483647||ids.has(id)||typeof name!=='string'||!name.trim()||name.length>500)throw new Error('Invalid route record');
-  ids.add(id);return {id,name:name.trim()};
+  ids.add(id);return {id,name:name.trim(),...(Number.isSafeInteger(row.src_office_id)&&row.src_office_id>0&&Array.isArray(row.dst_office_ids)&&row.dst_office_ids.every(v=>Number.isSafeInteger(v)&&v>0)?{src_office_id:row.src_office_id,dst_office_ids:row.dst_office_ids}:{})};
  });
  if(meta.has_next&&(!rows.length||typeof meta.page_token!=='string'||!meta.page_token||meta.page_token.length>2000))throw new Error('Invalid route cursor');
  return {rows:normalized,nextToken:meta.has_next?meta.page_token:null};
